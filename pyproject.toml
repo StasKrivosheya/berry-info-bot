@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "berry-info-bot"
+version = "0.1.0"
+description = "Telegram bot backend skeleton with FastAPI ops endpoints and aiogram long polling."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "asyncpg>=0.30.0,<1.0.0",
+  "aiogram>=3.17.0,<4.0.0",
+  "fastapi>=0.116.0,<1.0.0",
+  "pydantic-settings>=2.8.0,<3.0.0",
+  "sqlalchemy>=2.0.36,<3.0.0",
+  "uvicorn>=0.35.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.0,<1.0.0",
+  "pytest>=8.3.0,<9.0.0",
+  "ruff>=0.12.0,<1.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "ASYNC", "RUF"]
