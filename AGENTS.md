@@ -30,4 +30,3 @@ Preferred checks before commit:
   - `bot` for aiogram layer
   - `infra` for adapters
   - `bootstrap` for lifecycle wiring
-- Keep business logic out of Phase 1 skeleton modules.

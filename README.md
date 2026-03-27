@@ -9,8 +9,9 @@ Production-light, future-supportable backend skeleton for a Telegram bot.
 - Initializes async SQLAlchemy engine/session scaffold (`asyncpg`)
 - Uses structured JSON logging
 - Provides Windows-friendly task script and Unix `Makefile`
-
-No business logic is implemented yet. The `/start` bot handler is a wiring stub.
+- Provides a scenario-driven Telegram menu with inline navigation and back flow
+- Stores bot UI texts/links in typed resource maps (`StrEnum` keys)
+- Handles keyword trigger `2026` and friendly fallbacks for unknown input
 
 ## Code map (where to add things)
 
@@ -88,7 +89,7 @@ make docker-down
 | --- | --- | --- | --- |
 | Windows local app | `.env.local` configured, local Postgres available | `python -m app.main` | startup logs + `/health` returns 200 |
 | Docker local stack | `.env.docker` configured | `docker compose up --build` | `app` + `db` run, `/health` returns 200 |
-| Unit test | deps installed | `pytest -q` | `1 passed` (health test) |
+| Unit test | deps installed | `pytest -q` | all tests pass |
 | Lint | deps installed | `ruff check src tests` | no violations |
 
 Health check:
