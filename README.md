@@ -122,6 +122,53 @@ Expected JSON:
 JetBrains make-target configurations require GNU Make, which Windows does not ship by default.  
 Use PowerShell run configurations that call `scripts/dev.ps1` tasks or direct Python commands.
 
+## Knowledge-base CSV parser
+
+Use this parser to convert manually exported Google Sheets CSV tabs into Markdown files for vector
+store ingestion.
+
+### Expected local folder structure
+
+```text
+data/
+  knowledge_base/
+    parser_config.toml
+    raw_csv/
+      01-faq.csv
+      02-catalog.csv
+    processed/
+      manifest.json
+      markdown/
+        01-faq.md
+        02-catalog.md
+```
+
+Recommended CSV naming: `NN-topic-name.csv` (for deterministic ordering and readable output).
+
+### Run parser
+
+```powershell
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+```
+
+Custom paths:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli `
+  --input-dir data/knowledge_base/raw_csv `
+  --output-dir data/knowledge_base/processed `
+  --config data/knowledge_base/parser_config.toml
+```
+
+### Input/output behavior
+
+- Discovers all `*.csv` files in the input directory in lexicographic order.
+- Reads CSV with strict decoding fallback (`utf-8-sig`, then `cp1251`) and strict CSV parsing.
+- Normalizes whitespace while preserving meaningful paragraph breaks.
+- Drops fully empty rows and globally empty columns.
+- Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`.
+- Continues after file-level failures and returns non-zero exit code only if all files fail.
+
 ## Security note
 
 - Never commit real secrets to tracked files.
