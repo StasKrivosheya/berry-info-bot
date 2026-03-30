@@ -1,4 +1,4 @@
-# berry-info-bot
+﻿# berry-info-bot
 
 Production-light, future-supportable backend skeleton for a Telegram bot.
 
@@ -169,7 +169,53 @@ Custom paths:
 - Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`.
 - Continues after file-level failures and returns non-zero exit code only if all files fail.
 
+## OpenAI Vector Store Sync And Smoke Test
+
+This project supports deterministic sync into an existing OpenAI vector store using replace-by-
+`logical_id` semantics.
+
+### Why replace by `logical_id` instead of append forever
+
+- Prevents stale content accumulation when source markdown is regenerated.
+- Ensures retrieval results reflect only the current KB version for each logical document.
+- Keeps future admin-triggered refresh deterministic (`/kb_refresh` can call the same sync service).
+
+### Sync command
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py --replace
+```
+
+Useful options:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py `
+  --manifest data/knowledge_base/processed/manifest.json `
+  --dry-run `
+  --only-category 02-Program-Description `
+  --only-logical-id 02-program-description `
+  --replace
+```
+
+Environment variables used by sync/search:
+
+- `OPENAI_API_KEY`: authentication for OpenAI SDK.
+- `OPENAI_VECTOR_STORE_ID`: target vector store id to sync/search.
+- `OPENAI_KB_SEARCH_MAX_RESULTS`: optional override (strict default is `3`).
+- `OPENAI_KB_SCORE_THRESHOLD`: optional override (strict default is `0.7`).
+
+### Smoke test command
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_smoke_test.py "how to register for the program?"
+```
+
+The smoke test prints top hits (score, filename, logical_id, category, excerpt). If no result is
+relevant enough, it prints: `No relevant information found in the knowledge base.`
+Use `--rewrite-query` to enable query rewriting when needed for experiments.
+
 ## Security note
 
 - Never commit real secrets to tracked files.
 - Keep real values only in local `.env.local` / `.env.docker`.
+
