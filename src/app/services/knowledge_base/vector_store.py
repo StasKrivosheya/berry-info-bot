@@ -6,6 +6,7 @@ from typing import Any
 
 from openai import OpenAI
 
+from app.services.knowledge_base.attribute_utils import normalize_attributes
 from app.services.knowledge_base.kb_openai_config import (
     KnowledgeBaseOpenAISettings,
     get_kb_openai_settings,
@@ -89,7 +90,7 @@ class KnowledgeBaseVectorStoreClient:
                     VectorStoreFileRecord(
                         file_id=file_id,
                         filename=self._resolve_filename(file_id),
-                        attributes=_normalize_attributes(getattr(item, "attributes", None)),
+                        attributes=normalize_attributes(getattr(item, "attributes", None)),
                     )
                 )
             if not page.has_next_page():
@@ -275,19 +276,3 @@ class KnowledgeBaseVectorStoreClient:
             )
         self._filename_cache[file_id] = filename
         return filename
-
-
-def _normalize_attributes(raw_attributes: object) -> Attributes:
-    if not isinstance(raw_attributes, dict):
-        return {}
-
-    normalized: Attributes = {}
-    for key, value in raw_attributes.items():
-        if not isinstance(key, str):
-            continue
-        if isinstance(value, (str, float, bool)):
-            normalized[key] = value
-            continue
-        if isinstance(value, int):
-            normalized[key] = float(value)
-    return normalized

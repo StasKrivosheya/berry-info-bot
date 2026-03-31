@@ -11,6 +11,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from app.services.knowledge_base.cli_output import render_smoke_test_output  # noqa: E402
 from app.services.knowledge_base.kb_openai_config import get_kb_openai_settings  # noqa: E402
 from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService  # noqa: E402
 
@@ -63,32 +64,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("kb_smoke_test_failed")
         return 1
 
-    print(f"query: {args.query}")
-    print(
-        "result_count: "
-        f"{len(hits.results)} "
-        f"(threshold={hits.used_threshold}, top_score={hits.top_score}, "
-        f"fallback_triggered={hits.fallback_triggered})"
-    )
-    for index, hit in enumerate(hits.results, start=1):
-        logical_id = hit.attributes.get("logical_id", "")
-        category = hit.attributes.get("category", "")
-        excerpt = _make_excerpt(hit.text)
-        print(f"{index}. score={hit.score:.4f} file={hit.filename} file_id={hit.file_id}")
-        print(f"   logical_id={logical_id} category={category}")
-        print(f"   excerpt={excerpt}")
-
-    if hits.fallback_triggered:
-        print(hits.fallback_message or "No relevant information found in the knowledge base.")
+    print(render_smoke_test_output(args.query, hits))
 
     return 0
-
-
-def _make_excerpt(text: str, max_len: int = 220) -> str:
-    normalized = " ".join(text.split())
-    if len(normalized) <= max_len:
-        return normalized
-    return normalized[: max_len - 3].rstrip() + "..."
 
 
 if __name__ == "__main__":

@@ -48,12 +48,12 @@ class KnowledgeBaseOpenAISettings(BaseSettings):
     @field_validator("openai_kb_search_max_results")
     @classmethod
     def clamp_search_max_results(cls, value: int) -> int:
-        return max(MIN_SEARCH_RESULTS, min(MAX_SEARCH_RESULTS, value))
+        return clamp_search_max_results(value)
 
     @field_validator("openai_kb_score_threshold")
     @classmethod
     def clamp_score_threshold(cls, value: float) -> float:
-        return max(MIN_SCORE_THRESHOLD, min(MAX_SCORE_THRESHOLD, value))
+        return clamp_score_threshold(value)
 
 
 @lru_cache(maxsize=1)
@@ -61,3 +61,11 @@ def get_kb_openai_settings() -> KnowledgeBaseOpenAISettings:
     """Return cached settings for KB vector-store operations."""
 
     return KnowledgeBaseOpenAISettings()
+
+
+def clamp_search_max_results(value: int) -> int:
+    return max(MIN_SEARCH_RESULTS, min(MAX_SEARCH_RESULTS, value))
+
+
+def clamp_score_threshold(value: float) -> float:
+    return max(MIN_SCORE_THRESHOLD, min(MAX_SCORE_THRESHOLD, value))

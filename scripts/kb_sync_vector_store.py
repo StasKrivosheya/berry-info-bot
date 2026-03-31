@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from collections.abc import Sequence
@@ -12,6 +11,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from app.services.knowledge_base.cli_output import render_sync_report  # noqa: E402
 from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService  # noqa: E402
 
 DEFAULT_MANIFEST_PATH = Path("data/knowledge_base/processed/manifest.json")
@@ -86,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("kb_sync_failed")
         return 1
 
-    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False, sort_keys=True))
+    print(render_sync_report(report))
 
     if report.has_failures:
         logger.error(

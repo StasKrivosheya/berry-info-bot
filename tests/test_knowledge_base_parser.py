@@ -137,3 +137,39 @@ def test_partial_failure_does_not_fail_batch_but_all_fail_returns_non_zero(tmp_p
         ]
     )
     assert exit_code_all_failed == 1
+
+
+def test_parser_rerun_keeps_markdown_bytes_and_stable_manifest_entry_fields(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    config_path = tmp_path / "parser_config.toml"
+
+    _write_text(input_dir / "faq.csv", "Question,Answer\nQ1,A1\nQ2,A2\n")
+    _write_text(
+        config_path,
+        """
+[files."faq.csv"]
+question_column_name = "Question"
+answer_column_name = "Answer"
+""".strip(),
+    )
+
+    parse_knowledge_base(input_dir=input_dir, output_dir=output_dir, config_path=config_path)
+    first_markdown = (output_dir / "markdown" / "faq.md").read_bytes()
+    first_manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    first_entry = first_manifest["entries"][0]
+
+    parse_knowledge_base(input_dir=input_dir, output_dir=output_dir, config_path=config_path)
+    second_markdown = (output_dir / "markdown" / "faq.md").read_bytes()
+    second_manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    second_entry = second_manifest["entries"][0]
+
+    assert first_markdown == second_markdown
+    assert first_entry["source_csv"] == second_entry["source_csv"]
+    assert first_entry["output_md_file"] == second_entry["output_md_file"]
+    assert first_entry["logical_id"] == second_entry["logical_id"]
+    assert first_entry["category"] == second_entry["category"]
+    assert first_entry["version"] == second_entry["version"]
+    assert first_entry["row_count"] == second_entry["row_count"]
+    assert first_entry["non_empty_cell_count"] == second_entry["non_empty_cell_count"]
+    assert first_entry["content_hash_sha256"] == second_entry["content_hash_sha256"]
