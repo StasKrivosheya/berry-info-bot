@@ -177,11 +177,15 @@ Custom paths:
 - Supports per-sheet parser hints through `parser_config.toml` with `parser_profile` values:
   `qa_table`, `section_table`, `column_split`, and `outline_sheet`.
 - Supports workbook-level `sheet_indexes = [1, 2, 3]` selection when you want to parse only
-  specific tabs by their 1-based sheet order.
+  specific tabs by their 1-based visible sheet order.
+- Fails the workbook parse when configured `sheet_indexes` reference tabs that are not present
+  among the currently visible sheets, instead of silently under-parsing.
 - Supports format filtering through parser config (`[defaults].source_formats`) or CLI
   `--source-format` flags, for example XLSX-only runs while CSV parsing is temporarily disabled.
 - Prefers conservative parsing for freeform workbook sheets:
   ambiguous heading/paragraph rows fail with diagnostics instead of being guessed.
+- Removes previously generated markdown for a source before re-parsing it, so a newly failed sheet
+  does not leave stale `.md` files behind in `processed/markdown`.
 - Normalizes whitespace while preserving meaningful paragraph breaks.
 - Drops fully empty rows and globally empty columns.
 - Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`

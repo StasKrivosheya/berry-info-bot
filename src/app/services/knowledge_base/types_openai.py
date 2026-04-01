@@ -18,6 +18,7 @@ class ManifestSyncItem:
     source_file: str
     source_format: str
     sheet_name: str | None
+    sheet_index: int | None
     workbook_file: str | None
     content_hash_sha256: str
     markdown_relative_path: str
@@ -37,6 +38,8 @@ class ManifestSyncItem:
         }
         if self.sheet_name:
             attributes["sheet_name"] = self.sheet_name
+        if self.sheet_index is not None:
+            attributes["sheet_index"] = str(self.sheet_index)
         if self.workbook_file:
             attributes["workbook_file"] = self.workbook_file
         if self.source_format == "csv":
@@ -54,6 +57,14 @@ class VectorStoreFileRecord:
 @dataclass(slots=True)
 class DeleteReport:
     logical_id: str
+    matched_count: int
+    deleted_count: int
+    deleted_underlying_count: int
+    deleted_file_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DeleteRecordsReport:
     matched_count: int
     deleted_count: int
     deleted_underlying_count: int

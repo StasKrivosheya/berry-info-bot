@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from app.services.knowledge_base.manifest_reader import load_manifest_sync_items
+from app.services.knowledge_base.manifest_reader import (
+    load_manifest_error_workbooks,
+    load_manifest_sync_items,
+)
 
 
 def test_load_manifest_sync_items_raises_on_incomplete_entries(tmp_path: Path) -> None:
@@ -95,4 +98,72 @@ def test_load_manifest_sync_items_accepts_legacy_source_csv_field(tmp_path: Path
     assert items[0].source_file == "faq.csv"
     assert items[0].source_format == "csv"
     assert items[0].sheet_name is None
+    assert items[0].sheet_index is None
     assert items[0].workbook_file is None
+
+
+def test_load_manifest_sync_items_reads_optional_sheet_index(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "processed"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": ".",
+                "entries": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Offers",
+                        "sheet_index": 3,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-offers.md"],
+                        "logical_id": "book-offers",
+                        "category": "offers",
+                        "version": "1.0",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = load_manifest_sync_items(manifest_path)
+
+    assert items[0].sheet_name == "Offers"
+    assert items[0].sheet_index == 3
+    assert items[0].workbook_file == "book.xlsx"
+
+
+def test_load_manifest_error_workbooks_collects_xlsx_failures(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "processed"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "entries": [],
+                "errors": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Offers",
+                        "workbook_file": "book.xlsx",
+                        "error_type": "OutlineParseError",
+                        "message": "ambiguous",
+                    },
+                    {
+                        "source_file": "faq.csv",
+                        "source_format": "csv",
+                        "sheet_name": None,
+                        "workbook_file": None,
+                        "error_type": "ValueError",
+                        "message": "broken csv",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_manifest_error_workbooks(manifest_path) == {"book.xlsx"}

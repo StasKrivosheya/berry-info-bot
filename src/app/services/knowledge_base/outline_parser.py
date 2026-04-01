@@ -149,6 +149,15 @@ def _classify_candidate(
     if candidate.row_index in set(override.forced_paragraph_rows):
         return OutlineBlock(kind="paragraph", text=text), []
 
+    force_header = candidate.row_index in set(override.forced_header_rows)
+    if force_header:
+        kind = (
+            "title"
+            if candidate.row_index == first_row_index and not has_title
+            else "section_header"
+        )
+        return OutlineBlock(kind=kind, text=text), []
+
     labelled = split_labelled_cell(text)
     if labelled is not None:
         label, body = labelled
@@ -159,7 +168,7 @@ def _classify_candidate(
         heading, body = inline_heading
         return OutlineBlock(kind="label_value", text=f"{heading}\n\n{body}"), []
 
-    if _looks_like_ambiguous_inline_heading_block(text):
+    if _looks_like_ambiguous_inline_heading_block(candidate, text):
         return None, [
             ParseDiagnostic(
                 code=DIAGNOSTIC_INLINE_HEADER_UNSUPPORTED,
@@ -172,7 +181,6 @@ def _classify_candidate(
             )
         ]
 
-    force_header = candidate.row_index in set(override.forced_header_rows)
     headerish = _is_headerish_text(text)
     strong_header_cue = _has_strong_header_cue(candidate) or _looks_like_display_header(text)
     if candidate.row_index == first_row_index and headerish:
@@ -241,26 +249,28 @@ def _split_multiline_heading_block(text: str) -> tuple[str, str] | None:
         return first_line[:-1].strip(), body
     if first_line.endswith("?"):
         return first_line, body
-    if first_line.endswith("!"):
-        return None
-    if _starts_with_bullet(first_line):
-        return None
-    word_count = len(first_line.split())
-    if 2 <= word_count <= 6 and _is_headerish_text(first_line):
-        return first_line, body
     return None
 
 
-def _looks_like_ambiguous_inline_heading_block(text: str) -> bool:
+def _looks_like_ambiguous_inline_heading_block(
+    candidate: OutlineCandidate,
+    text: str,
+) -> bool:
     lines = [line for line in normalize_cell_text(text).splitlines() if line]
     if len(lines) < 2:
         return False
     first_line = lines[0]
     if first_line.endswith(":") or first_line.endswith("?"):
         return False
+    if _starts_with_bullet(first_line):
+        return False
     if not _is_headerish_text(first_line):
         return False
-    return len(first_line.split()) <= 1 and any(_starts_with_bullet(line) for line in lines[1:])
+
+    if any(_starts_with_bullet(line) for line in lines[1:]):
+        return len(first_line.split()) <= 6
+
+    return _has_strong_header_cue(candidate) or _looks_like_display_header(first_line)
 
 
 def _looks_like_list(text: str) -> bool:

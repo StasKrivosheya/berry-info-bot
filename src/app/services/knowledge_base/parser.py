@@ -111,6 +111,7 @@ def parse_knowledge_base(
                     source_file=source_path.name,
                     source_format=source_format,
                     sheet_name=None,
+                    sheet_index=None,
                     workbook_file=None,
                     exc=exc,
                 )
@@ -126,6 +127,7 @@ def parse_knowledge_base(
                 source_file=source_path.name,
                 source_format="xlsx",
                 sheet_name=None,
+                sheet_index=None,
                 workbook_file=source_path.name,
                 exc=exc,
             )
@@ -133,13 +135,29 @@ def parse_knowledge_base(
             logger.exception("%s source=%s", LOG_EVENT_FILE_FAILED, error.source_ref)
             continue
 
-        workbook_sheets = _filter_workbook_sheets(workbook_sheets, file_override.sheet_indexes)
+        try:
+            workbook_sheets = _filter_workbook_sheets(workbook_sheets, file_override.sheet_indexes)
+        except Exception as exc:
+            discovered_source_count += 1
+            error = _build_parse_error(
+                source_file=source_path.name,
+                source_format="xlsx",
+                sheet_name=None,
+                sheet_index=None,
+                workbook_file=source_path.name,
+                exc=exc,
+            )
+            errors.append(error)
+            logger.exception("%s source=%s", LOG_EVENT_FILE_FAILED, error.source_ref)
+            continue
+
         if not workbook_sheets:
             discovered_source_count += 1
             error = FileParseError(
                 source_file=source_path.name,
                 source_format="xlsx",
                 sheet_name=None,
+                sheet_index=None,
                 workbook_file=source_path.name,
                 error_type="NoSelectedSheetsFound",
                 message=(
@@ -187,6 +205,7 @@ def parse_knowledge_base(
                     source_file=source_path.name,
                     source_format="xlsx",
                     sheet_name=sheet.sheet_name,
+                    sheet_index=sheet.sheet_index,
                     workbook_file=source_path.name,
                     exc=exc,
                 )
@@ -199,6 +218,7 @@ def parse_knowledge_base(
                 source_file="*",
                 source_format="unknown",
                 sheet_name=None,
+                sheet_index=None,
                 workbook_file=None,
                 error_type="NoSourceFilesFound",
                 message=(
@@ -213,6 +233,7 @@ def parse_knowledge_base(
                 source_file="*",
                 source_format="unknown",
                 sheet_name=None,
+                sheet_index=None,
                 workbook_file=None,
                 error_type="NoMatchingSourceFormatsFound",
                 message=(
@@ -252,10 +273,15 @@ def _parse_csv_source(
     config: ParseConfig,
     override: SourceOverride,
 ) -> tuple[ManifestEntry, FileParseStats]:
+    source_slug = slugify(csv_path.stem)
+    cleanup_source_slugs = _build_cleanup_source_slugs(source_slug, csv_path.stem)
+    _cleanup_previous_outputs(
+        markdown_dir=markdown_dir,
+        source_slugs=(source_slug, *cleanup_source_slugs),
+    )
     prepared_table = read_and_prepare_csv(csv_path)
     _validate_non_empty_table(prepared_table, _source_ref(csv_path.name, None))
 
-    source_slug = slugify(csv_path.stem)
     title = override.title or prettify_title(csv_path.stem)
     category = override.category or csv_path.stem
     logical_id = resolve_logical_id(config, override, source_slug)
@@ -274,6 +300,7 @@ def _parse_csv_source(
         source_file=csv_path.name,
         source_format="csv",
         sheet_name=None,
+        sheet_index=None,
         workbook_file=None,
         logical_id=logical_id,
         category=category,
@@ -281,6 +308,7 @@ def _parse_csv_source(
         row_count=prepared_table.row_count,
         non_empty_cell_count=prepared_table.non_empty_cell_count,
         parse_mode=parse_mode,
+        cleanup_source_slugs=cleanup_source_slugs,
     )
 
 
@@ -295,6 +323,10 @@ def _parse_xlsx_sheet(
     source_key = f"{workbook_path.stem}-{sheet.sheet_name}"
     source_slug = slugify(source_key)
     cleanup_source_slugs = _build_cleanup_source_slugs(source_slug, source_key)
+    _cleanup_previous_outputs(
+        markdown_dir=markdown_dir,
+        source_slugs=(source_slug, *cleanup_source_slugs),
+    )
     title = override.title or prettify_title(sheet.sheet_name)
     category = override.category or sheet.sheet_name
     logical_id = resolve_logical_id(config, override, source_slug)
@@ -332,6 +364,7 @@ def _parse_xlsx_sheet(
         source_file=workbook_path.name,
         source_format="xlsx",
         sheet_name=sheet.sheet_name,
+        sheet_index=sheet.sheet_index,
         workbook_file=workbook_path.name,
         logical_id=logical_id,
         category=category,
@@ -351,6 +384,7 @@ def _finalize_parse_result(
     source_file: str,
     source_format: SourceFormat,
     sheet_name: str | None,
+    sheet_index: int | None,
     workbook_file: str | None,
     logical_id: str,
     category: str,
@@ -360,10 +394,6 @@ def _finalize_parse_result(
     parse_mode: str,
     cleanup_source_slugs: tuple[str, ...] = (),
 ) -> tuple[ManifestEntry, FileParseStats]:
-    _cleanup_previous_outputs(
-        markdown_dir=markdown_dir,
-        source_slugs=(source_slug, *cleanup_source_slugs),
-    )
     docs = sorted(docs, key=lambda doc: doc.file_name.casefold())
     for document in docs:
         (markdown_dir / document.file_name).write_text(document.content, encoding="utf-8")
@@ -376,6 +406,7 @@ def _finalize_parse_result(
         source_file=source_file,
         source_format=source_format,
         sheet_name=sheet_name,
+        sheet_index=sheet_index,
         workbook_file=workbook_file,
         output_md_file=output_files,
         logical_id=logical_id,
@@ -390,6 +421,7 @@ def _finalize_parse_result(
         source_file=source_file,
         source_format=source_format,
         sheet_name=sheet_name,
+        sheet_index=sheet_index,
         workbook_file=workbook_file,
         parse_mode=parse_mode,
         markdown_file_count=len(output_files),
@@ -428,6 +460,19 @@ def _filter_workbook_sheets(
     if not selected_indexes:
         return workbook_sheets
 
+    available_indexes = {sheet.sheet_index for sheet in workbook_sheets}
+    invalid_indexes = sorted(
+        index for index in dict.fromkeys(selected_indexes) if index not in available_indexes
+    )
+    if invalid_indexes:
+        available_display = ", ".join(str(index) for index in sorted(available_indexes)) or "none"
+        invalid_display = ", ".join(str(index) for index in invalid_indexes)
+        msg = (
+            "Configured sheet_indexes contain indexes that are not present among visible sheets: "
+            f"{invalid_display}. Available visible sheet indexes: {available_display}."
+        )
+        raise ValueError(msg)
+
     selected_index_set = set(selected_indexes)
     return [sheet for sheet in workbook_sheets if sheet.sheet_index in selected_index_set]
 
@@ -461,6 +506,7 @@ def _build_parse_error(
     source_file: str,
     source_format: SourceFormat,
     sheet_name: str | None,
+    sheet_index: int | None,
     workbook_file: str | None,
     exc: Exception,
 ) -> FileParseError:
@@ -471,6 +517,7 @@ def _build_parse_error(
         source_file=source_file,
         source_format=source_format,
         sheet_name=sheet_name,
+        sheet_index=sheet_index,
         workbook_file=workbook_file,
         error_type=type(exc).__name__,
         message=str(exc),

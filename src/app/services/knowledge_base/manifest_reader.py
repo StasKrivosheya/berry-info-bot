@@ -13,11 +13,7 @@ LOG_EVENT_MANIFEST_LOADED = "kb_manifest_loaded"
 def load_manifest_sync_items(manifest_path: Path) -> list[ManifestSyncItem]:
     """Read sync-ready manifest rows from parser output file."""
 
-    if not manifest_path.exists():
-        msg = f"Manifest file does not exist: {manifest_path.as_posix()}"
-        raise FileNotFoundError(msg)
-
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = _load_manifest_payload(manifest_path)
     entries = payload.get("entries")
     if not isinstance(entries, list):
         msg = "Manifest payload must include 'entries' list."
@@ -79,6 +75,7 @@ def _load_manifest_entry_items(
     source_file = _resolve_source_file(entry)
     source_format = _resolve_source_format(entry, source_file)
     sheet_name = _optional_non_empty_str(entry.get("sheet_name"))
+    sheet_index = _optional_positive_int(entry.get("sheet_index"))
     workbook_file = _optional_non_empty_str(entry.get("workbook_file"))
     content_hash = str(entry.get("content_hash_sha256", "")).strip()
     output_md_files = entry.get("output_md_file")
@@ -104,6 +101,7 @@ def _load_manifest_entry_items(
                 source_file=source_file,
                 source_format=source_format,
                 sheet_name=sheet_name,
+                sheet_index=sheet_index,
                 workbook_file=workbook_file,
                 content_hash_sha256=content_hash,
                 markdown_relative_path=relative_path,
@@ -139,6 +137,30 @@ def _optional_non_empty_str(value: object) -> str | None:
     return normalized or None
 
 
+def load_manifest_error_workbooks(manifest_path: Path) -> set[str]:
+    """Return workbook source files that currently have parser errors in the manifest."""
+
+    payload = _load_manifest_payload(manifest_path)
+    raw_errors = payload.get("errors")
+    if not isinstance(raw_errors, list):
+        return set()
+
+    workbooks: set[str] = set()
+    for raw_error in raw_errors:
+        if not isinstance(raw_error, dict):
+            continue
+        workbook_file = _optional_non_empty_str(raw_error.get("workbook_file"))
+        if workbook_file:
+            workbooks.add(workbook_file)
+            continue
+
+        source_format = _optional_non_empty_str(raw_error.get("source_format"))
+        source_file = _optional_non_empty_str(raw_error.get("source_file"))
+        if source_format == "xlsx" and source_file:
+            workbooks.add(source_file)
+    return workbooks
+
+
 def _require_non_empty_str(entry: dict[str, object], *, key: str, entry_index: int) -> str:
     value = str(entry.get(key, "")).strip()
     if value:
@@ -146,4 +168,24 @@ def _require_non_empty_str(entry: dict[str, object], *, key: str, entry_index: i
 
     msg = f"Manifest entry #{entry_index} must include a non-empty '{key}' value."
     raise ValueError(msg)
+
+
+def _optional_positive_int(value: object) -> int | None:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    return resolved if resolved > 0 else None
+
+
+def _load_manifest_payload(manifest_path: Path) -> dict[str, object]:
+    if not manifest_path.exists():
+        msg = f"Manifest file does not exist: {manifest_path.as_posix()}"
+        raise FileNotFoundError(msg)
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        msg = "Manifest payload must be a JSON object."
+        raise ValueError(msg)
+    return payload
 

@@ -6,7 +6,7 @@ source_formats = ["xlsx"]
 # "01-faq" = "faq"
 
 [files."info-msg-26.xlsx"]
-sheet_indexes = [1, 2, 3, 4]
+sheet_indexes = [1, 2, 3]
 # sheet 1 = "ОП весна-літо"
 # sheet 2 = "Опис програм"
 # sheet 3 = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
@@ -15,15 +15,20 @@ sheet_indexes = [1, 2, 3, 4]
 
 [files."info-msg-26.xlsx".sheets."ОП весна-літо"]
 # parser_profile = "outline_sheet"
+forced_paragraph_rows = [4, 38, 40]
 
 [files."info-msg-26.xlsx".sheets."Опис програм"]
 # parser_profile = "outline_sheet"
 
 [files."info-msg-26.xlsx".sheets."СВ (КВІТЕНЬ-ТРАВЕНЬ)"]
 # parser_profile = "outline_sheet"
+forced_header_rows = [3]
+forced_paragraph_rows = [5]
 
 [files."info-msg-26.xlsx".sheets."Кемпінг"]
 # parser_profile = "outline_sheet"
+forced_header_rows = [6]
+forced_paragraph_rows = [5]
 
 [files."info-msg-26.xlsx".sheets."Трансфер"]
 # parser_profile = "outline_sheet"

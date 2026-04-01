@@ -20,6 +20,7 @@ def _item(
         source_file=f"{logical_id}.csv",
         source_format="csv",
         sheet_name=None,
+        sheet_index=None,
         workbook_file=None,
         content_hash_sha256="hash",
         markdown_relative_path=markdown_relative_path,

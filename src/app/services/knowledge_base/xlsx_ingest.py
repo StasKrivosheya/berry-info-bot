@@ -76,10 +76,14 @@ def load_visible_workbook_sheets(workbook_path: Path) -> list[PreparedWorkbookSh
     workbook = load_workbook(workbook_path, data_only=True)
     try:
         sheets: list[PreparedWorkbookSheet] = []
-        for sheet_index, worksheet in enumerate(workbook.worksheets, start=1):
+        visible_sheet_index = 0
+        for worksheet in workbook.worksheets:
             if worksheet.sheet_state != "visible":
                 continue
-            sheets.append(_prepare_sheet(workbook_path.name, sheet_index, worksheet))
+            visible_sheet_index += 1
+            sheets.append(
+                _prepare_sheet(workbook_path.name, visible_sheet_index, worksheet)
+            )
         return sheets
     finally:
         workbook.close()

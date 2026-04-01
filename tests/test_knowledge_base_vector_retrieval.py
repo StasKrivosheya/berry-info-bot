@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from app.services.knowledge_base.kb_openai_config import KnowledgeBaseOpenAISettings
 from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService
 from app.services.knowledge_base.types_openai import (
+    DeleteRecordsReport,
     DeleteReport,
     SearchHit,
     SearchResponse,
@@ -21,6 +22,7 @@ class FakeVectorStoreClient:
         self.files = files or []
         self.ensure_called = False
         self.delete_calls: list[dict[str, object]] = []
+        self.delete_record_calls: list[dict[str, object]] = []
         self.upload_calls: list[dict[str, object]] = []
         self.search_payloads: list[dict[str, object]] = []
 
@@ -54,6 +56,27 @@ class FakeVectorStoreClient:
             deleted_count=len(matches),
             deleted_underlying_count=len(matches) if delete_underlying else 0,
             deleted_file_ids=[item.file_id for item in matches],
+        )
+
+    def delete_file_records(
+        self,
+        records: list[VectorStoreFileRecord],
+        *,
+        delete_underlying: bool = True,
+        dry_run: bool = False,
+    ) -> DeleteRecordsReport:
+        self.delete_record_calls.append(
+            {
+                "file_ids": [record.file_id for record in records],
+                "dry_run": dry_run,
+                "delete_underlying": delete_underlying,
+            }
+        )
+        return DeleteRecordsReport(
+            matched_count=len(records),
+            deleted_count=len(records),
+            deleted_underlying_count=len(records) if delete_underlying else 0,
+            deleted_file_ids=[record.file_id for record in records],
         )
 
     def upload_markdown_file(
@@ -137,6 +160,7 @@ def _write_manifest_with_two_docs(tmp_path: Path) -> Path:
                 "source_file": "01-faq.csv",
                 "source_format": "csv",
                 "sheet_name": None,
+                "sheet_index": None,
                 "workbook_file": None,
                 "output_md_file": ["markdown/faq--part-01.md", "markdown/faq--part-02.md"],
                 "logical_id": "faq",
@@ -219,6 +243,131 @@ def test_sync_dry_run_marks_operations_without_mutating(tmp_path: Path) -> None:
     assert report.deleted_count == 1
     assert report.uploaded_count == 2
     assert report.failed_count == 0
+
+
+def test_sync_deletes_stale_workbook_records_for_renamed_sheet(tmp_path: Path) -> None:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+    (markdown_dir / "book-new-name.md").write_text("# New Name\n", encoding="utf-8")
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "New Name",
+                        "sheet_index": 1,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-new-name.md"],
+                        "logical_id": "book-new-name",
+                        "category": "offers",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-03-30T00:00:00+00:00",
+                        "content_hash_sha256": "hash",
+                    }
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_client = FakeVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="stale_sheet",
+                filename="book-old-name.md",
+                attributes={
+                    "logical_id": "book-old-name",
+                    "workbook_file": "book.xlsx",
+                    "sheet_name": "Old Name",
+                    "sheet_index": "1",
+                },
+            )
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(manifest_path=manifest_path, replace=True, dry_run=False)
+
+    assert fake_client.delete_record_calls == [
+        {
+            "file_ids": ["stale_sheet"],
+            "dry_run": False,
+            "delete_underlying": True,
+        }
+    ]
+    assert report.deleted_count == 1
+    assert report.uploaded_count == 1
+
+
+def test_sync_skips_workbook_stale_cleanup_when_manifest_has_errors(tmp_path: Path) -> None:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+    (markdown_dir / "book-offers.md").write_text("# Offers\n", encoding="utf-8")
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Offers",
+                        "sheet_index": 1,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-offers.md"],
+                        "logical_id": "book-offers",
+                        "category": "offers",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-03-30T00:00:00+00:00",
+                        "content_hash_sha256": "hash",
+                    }
+                ],
+                "errors": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Broken Sheet",
+                        "workbook_file": "book.xlsx",
+                        "error_type": "OutlineParseError",
+                        "message": "ambiguous",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_client = FakeVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="stale_sheet",
+                filename="book-old-name.md",
+                attributes={
+                    "logical_id": "book-old-name",
+                    "workbook_file": "book.xlsx",
+                    "sheet_name": "Old Name",
+                    "sheet_index": "2",
+                },
+            )
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(manifest_path=manifest_path, replace=True, dry_run=False)
+
+    assert fake_client.delete_record_calls == []
+    assert report.deleted_count == 0
+    assert report.uploaded_count == 1
 
 
 def test_search_normalizes_results_and_applies_default_language_filter() -> None:

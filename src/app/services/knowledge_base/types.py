@@ -96,6 +96,7 @@ class ManifestEntry:
     source_file: str
     source_format: SourceFormat
     sheet_name: str | None
+    sheet_index: int | None
     workbook_file: str | None
     output_md_file: list[str]
     logical_id: str
@@ -118,6 +119,7 @@ class ManifestEntry:
             "source_file": self.source_file,
             "source_format": self.source_format,
             "sheet_name": self.sheet_name,
+            "sheet_index": self.sheet_index,
             "workbook_file": self.workbook_file,
             "output_md_file": self.output_md_file,
             "logical_id": self.logical_id,
@@ -136,6 +138,7 @@ class FileParseStats:
     source_file: str
     source_format: SourceFormat
     sheet_name: str | None
+    sheet_index: int | None
     workbook_file: str | None
     parse_mode: str
     markdown_file_count: int
@@ -154,6 +157,7 @@ class FileParseError:
     source_file: str
     source_format: SourceFormat
     sheet_name: str | None
+    sheet_index: int | None
     workbook_file: str | None
     error_type: str
     message: str
@@ -170,6 +174,7 @@ class FileParseError:
             "source_file": self.source_file,
             "source_format": self.source_format,
             "sheet_name": self.sheet_name,
+            "sheet_index": self.sheet_index,
             "workbook_file": self.workbook_file,
             "error_type": self.error_type,
             "message": self.message,

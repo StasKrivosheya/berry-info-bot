@@ -369,6 +369,79 @@ category = "sales"
     assert result.errors[0].diagnostics[0].row_numbers == (2,)
 
 
+def test_xlsx_outline_sheet_keeps_plain_multiline_prose_as_paragraph(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    multiline_offer = (
+        "\u0414\u0456\u0442\u0438 \u0434\u043e 3 \u0440\u043e\u043a\u0456\u0432\n"
+        "\u0432\u043a\u043b\u044e\u0447\u043d\u043e \u0442\u0430 "
+        "\u0456\u043c\u0435\u043d\u0438\u043d\u043d\u0438\u043a\u0438 "
+        "\u0432\u0445\u043e\u0434\u044f\u0442\u044c "
+        "\u0431\u0435\u0437\u043a\u043e\u0448\u0442\u043e\u0432\u043d\u043e"
+    )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Offers"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "Berry Land"
+    sheet["A2"] = multiline_offer
+    _save_workbook(input_dir / "offers.xlsx", workbook)
+
+    result = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=None,
+        source_formats=("xlsx",),
+    )
+
+    assert result.success_count == 1
+    markdown = (output_dir / "markdown" / "offers-offers.md").read_text(encoding="utf-8")
+    assert "###" not in markdown
+    assert "\u0414\u0456\u0442\u0438 \u0434\u043e 3 \u0440\u043e\u043a\u0456\u0432" in markdown
+    assert (
+        "\u0432\u043a\u043b\u044e\u0447\u043d\u043e \u0442\u0430 "
+        "\u0456\u043c\u0435\u043d\u0438\u043d\u043d\u0438\u043a\u0438 "
+        "\u0432\u0445\u043e\u0434\u044f\u0442\u044c "
+        "\u0431\u0435\u0437\u043a\u043e\u0448\u0442\u043e\u0432\u043d\u043e"
+        in markdown
+    )
+
+
+def test_forced_header_rows_override_labelled_cells(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    config_path = tmp_path / "parser_config.toml"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Offers"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "Berry Land"
+    sheet["A2"] = "Price: 550 UAH"
+    _save_workbook(input_dir / "offers.xlsx", workbook)
+
+    _write_text(
+        config_path,
+        """
+[files."offers.xlsx".sheets."Offers"]
+forced_header_rows = [2]
+""".strip(),
+    )
+
+    result = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=config_path,
+        source_formats=("xlsx",),
+    )
+
+    assert result.success_count == 1
+    markdown = (output_dir / "markdown" / "offers-offers.md").read_text(encoding="utf-8")
+    assert "## Price: 550 UAH" in markdown
+    assert "### Price" not in markdown
+
+
 def test_xlsx_sheet_can_use_explicit_table_profile(tmp_path: Path) -> None:
     input_dir = tmp_path / "raw"
     output_dir = tmp_path / "processed"
@@ -452,6 +525,81 @@ sheet_indexes = [1, 3]
     assert [entry.sheet_name for entry in result.entries] == ["First", "Third"]
     assert all(entry.source_format == "xlsx" for entry in result.entries)
     assert not (output_dir / "markdown" / "legacy.md").exists()
+
+
+def test_sheet_indexes_use_visible_order_when_hidden_tabs_exist(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    config_path = tmp_path / "parser_config.toml"
+
+    workbook = Workbook()
+    hidden = workbook.active
+    hidden.title = "Hidden"
+    hidden.sheet_state = "hidden"
+    visible = workbook.create_sheet("Visible")
+    visible.merge_cells("A1:C1")
+    visible["A1"] = "Visible Sheet"
+    visible["A2"] = "Body."
+    _save_workbook(input_dir / "bundle.xlsx", workbook)
+
+    _write_text(
+        config_path,
+        """
+[defaults]
+source_formats = ["xlsx"]
+
+[files."bundle.xlsx"]
+sheet_indexes = [1]
+""".strip(),
+    )
+
+    result = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=config_path,
+    )
+
+    assert result.success_count == 1
+    assert result.failure_count == 0
+    assert [entry.sheet_name for entry in result.entries] == ["Visible"]
+    assert result.entries[0].sheet_index == 1
+
+
+def test_invalid_sheet_indexes_fail_instead_of_under_parsing(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    config_path = tmp_path / "parser_config.toml"
+
+    workbook = Workbook()
+    first = workbook.active
+    first.title = "First"
+    first["A1"] = "First"
+    second = workbook.create_sheet("Second")
+    second["A1"] = "Second"
+    _save_workbook(input_dir / "bundle.xlsx", workbook)
+
+    _write_text(
+        config_path,
+        """
+[defaults]
+source_formats = ["xlsx"]
+
+[files."bundle.xlsx"]
+sheet_indexes = [0, 2, 999]
+""".strip(),
+    )
+
+    result = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=config_path,
+    )
+
+    assert result.success_count == 0
+    assert result.failure_count == 1
+    assert result.errors[0].error_type == "ValueError"
+    assert "0, 999" in result.errors[0].message
+    assert "Available visible sheet indexes: 1, 2" in result.errors[0].message
 
 
 def test_cli_source_format_override_can_enable_csv_when_config_defaults_to_xlsx(
@@ -542,6 +690,47 @@ sheet_indexes = [1, 2]
         "povidomlennia-26-kempinh.md",
         "povidomlennia-26-op-vesna-lito.md",
     ]
+
+
+def test_failed_rerun_removes_stale_markdown_after_new_ambiguity(tmp_path: Path) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Offers"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "Berry Land"
+    sheet["A2"] = "Safe paragraph."
+    _save_workbook(input_dir / "demo.xlsx", workbook)
+
+    first = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=None,
+        source_formats=("xlsx",),
+    )
+    assert first.success_count == 1
+    assert (output_dir / "markdown" / "demo-offers.md").exists()
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Offers"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "Berry Land"
+    sheet["A2"] = "Price\n- adult\n- child"
+    _save_workbook(input_dir / "demo.xlsx", workbook)
+
+    second = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=None,
+        source_formats=("xlsx",),
+    )
+
+    assert second.success_count == 0
+    assert second.failure_count == 1
+    assert not (output_dir / "markdown" / "demo-offers.md").exists()
 
 
 def test_infer_fallback_headers_does_not_guess_headers_for_two_column_pairs() -> None:
