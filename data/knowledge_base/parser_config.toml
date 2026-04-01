@@ -1,0 +1,16 @@
+[defaults]
+version = "1.0"
+
+[logical_id_overrides]
+# "01-faq" = "faq"
+
+[files."01-faq.csv"]
+# title = "FAQ"
+# category = "faq"
+# logical_id = "faq"
+# split_mode = "single" # "single" or "column"
+# split_column_name = "Topic"
+# section_column_name = "Section"
+# question_column_name = "Question"
+# answer_column_name = "Answer"
+

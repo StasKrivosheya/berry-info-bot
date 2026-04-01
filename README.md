@@ -1,4 +1,4 @@
-# berry-info-bot
+﻿# berry-info-bot
 
 Production-light, future-supportable backend skeleton for a Telegram bot.
 
@@ -122,7 +122,100 @@ Expected JSON:
 JetBrains make-target configurations require GNU Make, which Windows does not ship by default.  
 Use PowerShell run configurations that call `scripts/dev.ps1` tasks or direct Python commands.
 
+## Knowledge-base CSV parser
+
+Use this parser to convert manually exported Google Sheets CSV tabs into Markdown files for vector
+store ingestion.
+
+### Expected local folder structure
+
+```text
+data/
+  knowledge_base/
+    parser_config.toml
+    raw_csv/
+      01-faq.csv
+      02-catalog.csv
+    processed/
+      manifest.json
+      markdown/
+        01-faq.md
+        02-catalog.md
+```
+
+Recommended CSV naming: `NN-topic-name.csv` (for deterministic ordering and readable output).
+
+### Run parser
+
+```powershell
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+```
+
+Custom paths:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli `
+  --input-dir data/knowledge_base/raw_csv `
+  --output-dir data/knowledge_base/processed `
+  --config data/knowledge_base/parser_config.toml
+```
+
+### Input/output behavior
+
+- Discovers all `*.csv` files in the input directory in lexicographic order.
+- Reads CSV with strict decoding fallback (`utf-8-sig`, then `cp1251`) and strict CSV parsing.
+- Normalizes whitespace while preserving meaningful paragraph breaks.
+- Drops fully empty rows and globally empty columns.
+- Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`.
+- Continues after file-level failures and returns non-zero exit code only if all files fail.
+
+## OpenAI Vector Store Sync And Smoke Test
+
+This project supports deterministic sync into an existing OpenAI vector store using replace-by-
+`logical_id` semantics.
+
+### Why replace by `logical_id` instead of append forever
+
+- Prevents stale content accumulation when source markdown is regenerated.
+- Ensures retrieval results reflect only the current KB version for each logical document.
+- Keeps future admin-triggered refresh deterministic (`/kb_refresh` can call the same sync service).
+
+### Sync command
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py --replace
+```
+
+Useful options:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py `
+  --manifest data/knowledge_base/processed/manifest.json `
+  --dry-run `
+  --only-category 02-Program-Description `
+  --only-logical-id 02-program-description `
+  --replace
+```
+
+Environment variables used by sync/search:
+
+- `OPENAI_API_KEY`: authentication for OpenAI SDK.
+- `OPENAI_VECTOR_STORE_ID`: target vector store id to sync/search.
+- `OPENAI_KB_SEARCH_MAX_RESULTS`: optional override (strict default is `3`).
+- `OPENAI_KB_SCORE_THRESHOLD`: optional override (strict default is `0.7`).
+
+### Smoke test command
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_smoke_test.py "how to register for the program?"
+```
+
+The smoke test prints top hits (score, filename, logical_id, category, excerpt). If no result is
+relevant enough, it prints: `No relevant information found in the knowledge base.`
+Use `--rewrite-query` to enable query rewriting when needed for experiments.
+
 ## Security note
 
 - Never commit real secrets to tracked files.
 - Keep real values only in local `.env.local` / `.env.docker`.
+
