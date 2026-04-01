@@ -1,16 +1,56 @@
 [defaults]
 version = "1.0"
+source_formats = ["xlsx"]
 
 [logical_id_overrides]
 # "01-faq" = "faq"
 
+[files."info-msg-26.xlsx"]
+sheet_indexes = [1, 2, 3, 4]
+# sheet 1 = "ОП весна-літо"
+# sheet 2 = "Опис програм"
+# sheet 3 = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
+# sheet 4 = "Кемпінг"
+# sheet 5 = "Трансфер"
+
+[files."info-msg-26.xlsx".sheets."ОП весна-літо"]
+# parser_profile = "outline_sheet"
+
+[files."info-msg-26.xlsx".sheets."Опис програм"]
+# parser_profile = "outline_sheet"
+
+[files."info-msg-26.xlsx".sheets."СВ (КВІТЕНЬ-ТРАВЕНЬ)"]
+# parser_profile = "outline_sheet"
+
+[files."info-msg-26.xlsx".sheets."Кемпінг"]
+# parser_profile = "outline_sheet"
+
+[files."info-msg-26.xlsx".sheets."Трансфер"]
+# parser_profile = "outline_sheet"
+
 [files."01-faq.csv"]
+# parser_profile = "qa_table"
 # title = "FAQ"
 # category = "faq"
 # logical_id = "faq"
-# split_mode = "single" # "single" or "column"
-# split_column_name = "Topic"
-# section_column_name = "Section"
 # question_column_name = "Question"
 # answer_column_name = "Answer"
 
+[files."spring-offers.xlsx"]
+# category = "offers"
+# logical_id = "spring-offers"
+
+[files."spring-offers.xlsx".sheets."Family Day"]
+# parser_profile = "outline_sheet"
+# content_ranges = ["A:M"]
+# ignore_rows = [2]
+# forced_header_rows = [8, 14]
+# forced_paragraph_rows = [6]
+
+[files."faq-workbook.xlsx".sheets."FAQ"]
+# parser_profile = "qa_table"
+# title = "FAQ"
+# category = "faq"
+# logical_id = "faq"
+# question_column_name = "Question"
+# answer_column_name = "Answer"

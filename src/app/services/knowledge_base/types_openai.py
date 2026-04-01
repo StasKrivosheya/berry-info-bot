@@ -15,22 +15,33 @@ class ManifestSyncItem:
     category: str
     version: str
     updated_at_utc: str
-    source_csv: str
+    source_file: str
+    source_format: str
+    sheet_name: str | None
+    workbook_file: str | None
     content_hash_sha256: str
     markdown_relative_path: str
     markdown_absolute_path: Path
 
     @property
     def upload_attributes(self) -> Attributes:
-        return {
+        attributes: Attributes = {
             "logical_id": self.logical_id,
             "category": self.category,
             "version": self.version,
             "updated_at_utc": self.updated_at_utc,
-            "source_csv": self.source_csv,
+            "source_file": self.source_file,
+            "source_format": self.source_format,
             "language": "uk",
             "content_hash_sha256": self.content_hash_sha256,
         }
+        if self.sheet_name:
+            attributes["sheet_name"] = self.sheet_name
+        if self.workbook_file:
+            attributes["workbook_file"] = self.workbook_file
+        if self.source_format == "csv":
+            attributes["source_csv"] = self.source_file
+        return attributes
 
 
 @dataclass(slots=True)

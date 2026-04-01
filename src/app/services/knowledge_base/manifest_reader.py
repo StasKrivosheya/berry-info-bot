@@ -55,6 +55,9 @@ def resolve_output_dir(manifest_path: Path, raw_output_dir: object) -> Path:
         output_dir = Path(raw_output_dir.strip())
         if output_dir.is_absolute():
             return output_dir.resolve()
+        manifest_relative = (manifest_path.parent / output_dir).resolve()
+        if manifest_relative.exists() or (manifest_relative / "markdown").exists():
+            return manifest_relative
 
     return manifest_path.parent.resolve()
 
@@ -73,7 +76,10 @@ def _load_manifest_entry_items(
     category = _require_non_empty_str(entry, key="category", entry_index=entry_index)
     version = _require_non_empty_str(entry, key="version", entry_index=entry_index)
     updated_at_utc = str(entry.get("updated_at_utc", "")).strip()
-    source_csv = str(entry.get("source_csv", "")).strip()
+    source_file = _resolve_source_file(entry)
+    source_format = _resolve_source_format(entry, source_file)
+    sheet_name = _optional_non_empty_str(entry.get("sheet_name"))
+    workbook_file = _optional_non_empty_str(entry.get("workbook_file"))
     content_hash = str(entry.get("content_hash_sha256", "")).strip()
     output_md_files = entry.get("output_md_file")
     if not isinstance(output_md_files, list) or not output_md_files:
@@ -95,13 +101,42 @@ def _load_manifest_entry_items(
                 category=category,
                 version=version,
                 updated_at_utc=updated_at_utc,
-                source_csv=source_csv,
+                source_file=source_file,
+                source_format=source_format,
+                sheet_name=sheet_name,
+                workbook_file=workbook_file,
                 content_hash_sha256=content_hash,
                 markdown_relative_path=relative_path,
                 markdown_absolute_path=(output_dir / relative_path).resolve(),
             )
         )
     return items
+
+
+def _resolve_source_file(entry: dict[str, object]) -> str:
+    source_file = _optional_non_empty_str(entry.get("source_file"))
+    if source_file:
+        return source_file
+    legacy_source_csv = _optional_non_empty_str(entry.get("source_csv"))
+    if legacy_source_csv:
+        return legacy_source_csv
+    return ""
+
+
+def _resolve_source_format(entry: dict[str, object], source_file: str) -> str:
+    declared_format = _optional_non_empty_str(entry.get("source_format"))
+    if declared_format:
+        return declared_format
+    if source_file.casefold().endswith(".xlsx"):
+        return "xlsx"
+    if source_file:
+        return "csv"
+    return "unknown"
+
+
+def _optional_non_empty_str(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 def _require_non_empty_str(entry: dict[str, object], *, key: str, entry_index: int) -> str:

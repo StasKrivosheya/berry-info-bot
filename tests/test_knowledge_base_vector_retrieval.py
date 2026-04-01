@@ -134,7 +134,10 @@ def _write_manifest_with_two_docs(tmp_path: Path) -> Path:
         "output_dir": output_dir.as_posix(),
         "entries": [
             {
-                "source_csv": "01-faq.csv",
+                "source_file": "01-faq.csv",
+                "source_format": "csv",
+                "sheet_name": None,
+                "workbook_file": None,
                 "output_md_file": ["markdown/faq--part-01.md", "markdown/faq--part-02.md"],
                 "logical_id": "faq",
                 "category": "faq",
