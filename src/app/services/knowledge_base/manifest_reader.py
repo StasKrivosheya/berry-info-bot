@@ -28,39 +28,14 @@ def load_manifest_sync_items(manifest_path: Path) -> list[ManifestSyncItem]:
         raw_output_dir=payload.get("output_dir"),
     )
     items: list[ManifestSyncItem] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-
-        logical_id = str(entry.get("logical_id", "")).strip()
-        category = str(entry.get("category", "")).strip()
-        version = str(entry.get("version", "")).strip()
-        updated_at_utc = str(entry.get("updated_at_utc", "")).strip()
-        source_csv = str(entry.get("source_csv", "")).strip()
-        content_hash = str(entry.get("content_hash_sha256", "")).strip()
-        output_md_files = entry.get("output_md_file")
-
-        if not logical_id or not category or not version or not output_md_files:
-            continue
-        if not isinstance(output_md_files, list):
-            continue
-
-        for markdown_relative_path in output_md_files:
-            relative_path = str(markdown_relative_path).strip()
-            if not relative_path:
-                continue
-            items.append(
-                ManifestSyncItem(
-                    logical_id=logical_id,
-                    category=category,
-                    version=version,
-                    updated_at_utc=updated_at_utc,
-                    source_csv=source_csv,
-                    content_hash_sha256=content_hash,
-                    markdown_relative_path=relative_path,
-                    markdown_absolute_path=(output_dir / relative_path).resolve(),
-                )
+    for entry_index, entry in enumerate(entries, start=1):
+        items.extend(
+            _load_manifest_entry_items(
+                entry=entry,
+                entry_index=entry_index,
+                output_dir=output_dir,
             )
+        )
 
     items.sort(key=lambda item: (item.logical_id, item.markdown_relative_path.casefold()))
     logger.info(
@@ -74,18 +49,66 @@ def load_manifest_sync_items(manifest_path: Path) -> list[ManifestSyncItem]:
 
 
 def resolve_output_dir(manifest_path: Path, raw_output_dir: object) -> Path:
-    """Resolve output directory from manifest metadata and runtime cwd."""
+    """Resolve output directory without depending on the current working directory."""
 
     if isinstance(raw_output_dir, str) and raw_output_dir.strip():
         output_dir = Path(raw_output_dir.strip())
         if output_dir.is_absolute():
-            return output_dir
-
-        cwd_candidate = (Path.cwd() / output_dir).resolve()
-        if cwd_candidate.exists():
-            return cwd_candidate
-
-        return (manifest_path.parent / output_dir).resolve()
+            return output_dir.resolve()
 
     return manifest_path.parent.resolve()
+
+
+def _load_manifest_entry_items(
+    *,
+    entry: object,
+    entry_index: int,
+    output_dir: Path,
+) -> list[ManifestSyncItem]:
+    if not isinstance(entry, dict):
+        msg = f"Manifest entry #{entry_index} must be an object."
+        raise ValueError(msg)
+
+    logical_id = _require_non_empty_str(entry, key="logical_id", entry_index=entry_index)
+    category = _require_non_empty_str(entry, key="category", entry_index=entry_index)
+    version = _require_non_empty_str(entry, key="version", entry_index=entry_index)
+    updated_at_utc = str(entry.get("updated_at_utc", "")).strip()
+    source_csv = str(entry.get("source_csv", "")).strip()
+    content_hash = str(entry.get("content_hash_sha256", "")).strip()
+    output_md_files = entry.get("output_md_file")
+    if not isinstance(output_md_files, list) or not output_md_files:
+        msg = f"Manifest entry #{entry_index} must include a non-empty 'output_md_file' list."
+        raise ValueError(msg)
+
+    items: list[ManifestSyncItem] = []
+    for file_index, markdown_relative_path in enumerate(output_md_files, start=1):
+        relative_path = str(markdown_relative_path).strip()
+        if not relative_path:
+            msg = (
+                f"Manifest entry #{entry_index} contains an empty path in "
+                f"'output_md_file' at position {file_index}."
+            )
+            raise ValueError(msg)
+        items.append(
+            ManifestSyncItem(
+                logical_id=logical_id,
+                category=category,
+                version=version,
+                updated_at_utc=updated_at_utc,
+                source_csv=source_csv,
+                content_hash_sha256=content_hash,
+                markdown_relative_path=relative_path,
+                markdown_absolute_path=(output_dir / relative_path).resolve(),
+            )
+        )
+    return items
+
+
+def _require_non_empty_str(entry: dict[str, object], *, key: str, entry_index: int) -> str:
+    value = str(entry.get(key, "")).strip()
+    if value:
+        return value
+
+    msg = f"Manifest entry #{entry_index} must include a non-empty '{key}' value."
+    raise ValueError(msg)
 

@@ -30,6 +30,7 @@ MANIFEST_FILENAME = "manifest.json"
 
 LOG_EVENT_CSV_DISCOVERED = "kb_parser_csv_discovered"
 LOG_EVENT_PARSE_MODE_SELECTED = "kb_parser_mode_selected"
+LOG_EVENT_PARSE_MODE_FALLBACK = "kb_parser_mode_fallback"
 LOG_EVENT_FILE_GENERATED = "kb_parser_file_generated"
 LOG_EVENT_FILE_FAILED = "kb_parser_file_failed"
 
@@ -136,6 +137,12 @@ def _parse_one_csv(
         csv_path.name,
         parse_mode,
     )
+    if parse_mode == "fallback":
+        logger.warning(
+            "%s source_csv=%s note=parser_used_conservative_fallback_rendering",
+            LOG_EVENT_PARSE_MODE_FALLBACK,
+            csv_path.name,
+        )
 
     _cleanup_previous_outputs(markdown_dir=markdown_dir, source_slug=source_slug)
     docs = sorted(docs, key=lambda doc: doc.file_name.casefold())

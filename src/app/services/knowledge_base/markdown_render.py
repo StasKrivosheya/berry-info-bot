@@ -50,12 +50,12 @@ def render_documents(
 def infer_fallback_headers(rows: list[list[str]]) -> tuple[list[str] | None, list[list[str]]]:
     """Infer header presence for ambiguous fallback parsing."""
 
-    if len(rows) < 2:
+    if len(rows) < 3:
         return None, rows
 
     first_row = rows[0]
     non_empty_headers = [cell for cell in first_row if cell]
-    if len(non_empty_headers) < 2:
+    if len(non_empty_headers) < 3:
         return None, rows
 
     header_keys = [normalize_header_name(cell) for cell in non_empty_headers]

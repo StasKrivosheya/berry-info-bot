@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from app.services.knowledge_base.cli import main
+from app.services.knowledge_base.markdown_render import infer_fallback_headers
 from app.services.knowledge_base.parser import parse_knowledge_base
 
 
@@ -173,3 +174,29 @@ answer_column_name = "Answer"
     assert first_entry["row_count"] == second_entry["row_count"]
     assert first_entry["non_empty_cell_count"] == second_entry["non_empty_cell_count"]
     assert first_entry["content_hash_sha256"] == second_entry["content_hash_sha256"]
+
+
+def test_infer_fallback_headers_does_not_guess_headers_for_two_column_pairs() -> None:
+    rows = [
+        ["Dates", "May 1"],
+        ["Location", "Kyiv"],
+        ["Schedule", "09:00"],
+    ]
+
+    inferred_headers, data_rows = infer_fallback_headers(rows)
+
+    assert inferred_headers is None
+    assert data_rows == rows
+
+
+def test_infer_fallback_headers_accepts_larger_header_like_tables() -> None:
+    rows = [
+        ["Question", "Answer", "Section"],
+        ["How to register?", "Fill in the form.", "General"],
+        ["When does it open?", "At 09:00.", "General"],
+    ]
+
+    inferred_headers, data_rows = infer_fallback_headers(rows)
+
+    assert inferred_headers == rows[0]
+    assert data_rows == rows[1:]
