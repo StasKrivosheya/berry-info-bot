@@ -122,10 +122,11 @@ Expected JSON:
 JetBrains make-target configurations require GNU Make, which Windows does not ship by default.  
 Use PowerShell run configurations that call `scripts/dev.ps1` tasks or direct Python commands.
 
-## Knowledge-base CSV parser
+## Knowledge-base CSV/XLSX parser
 
-Use this parser to convert manually exported Google Sheets CSV tabs into Markdown files for vector
-store ingestion.
+Use this parser to convert manually exported Google Sheets tabs into Markdown files for vector
+store ingestion. Rich layout-heavy sheets should be exported as `.xlsx`; plain table-shaped tabs
+can stay as `.csv`.
 
 ### Expected local folder structure
 
@@ -136,14 +137,20 @@ data/
     raw_csv/
       01-faq.csv
       02-catalog.csv
+      03-offers.xlsx
     processed/
       manifest.json
       markdown/
         01-faq.md
         02-catalog.md
+        03-offers-family-day.md
 ```
 
-Recommended CSV naming: `NN-topic-name.csv` (for deterministic ordering and readable output).
+Recommended source naming: `NN-topic-name.csv` or `NN-topic-name.xlsx`.
+Local source exports in `data/knowledge_base/raw_csv` are ignored by Git, so you can drop real
+customer workbooks there without staging them.
+When workbook or sheet names use Cyrillic, the parser automatically transliterates them into
+stable ASCII markdown filenames, so you do not need to rename tabs manually.
 
 ### Run parser
 
@@ -157,16 +164,32 @@ Custom paths:
 .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli `
   --input-dir data/knowledge_base/raw_csv `
   --output-dir data/knowledge_base/processed `
-  --config data/knowledge_base/parser_config.toml
+  --config data/knowledge_base/parser_config.toml `
+  --source-format xlsx
 ```
 
 ### Input/output behavior
 
-- Discovers all `*.csv` files in the input directory in lexicographic order.
+- Discovers all `*.csv` and `*.xlsx` files in the input directory in lexicographic order.
 - Reads CSV with strict decoding fallback (`utf-8-sig`, then `cp1251`) and strict CSV parsing.
+- Reads visible workbook sheets from `.xlsx` exports and parses each visible sheet as a separate
+  source unit.
+- Supports per-sheet parser hints through `parser_config.toml` with `parser_profile` values:
+  `qa_table`, `section_table`, `column_split`, and `outline_sheet`.
+- Supports workbook-level `sheet_indexes = [1, 2, 3]` selection when you want to parse only
+  specific tabs by their 1-based visible sheet order.
+- Fails the workbook parse when configured `sheet_indexes` reference tabs that are not present
+  among the currently visible sheets, instead of silently under-parsing.
+- Supports format filtering through parser config (`[defaults].source_formats`) or CLI
+  `--source-format` flags, for example XLSX-only runs while CSV parsing is temporarily disabled.
+- Prefers conservative parsing for freeform workbook sheets:
+  ambiguous heading/paragraph rows fail with diagnostics instead of being guessed.
+- Removes previously generated markdown for a source before re-parsing it, so a newly failed sheet
+  does not leave stale `.md` files behind in `processed/markdown`.
 - Normalizes whitespace while preserving meaningful paragraph breaks.
 - Drops fully empty rows and globally empty columns.
-- Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`.
+- Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`
+  including source format, workbook/sheet metadata, and parser diagnostics for failures.
 - Continues after file-level failures and returns non-zero exit code only if all files fail.
 
 ## OpenAI Vector Store Sync And Smoke Test

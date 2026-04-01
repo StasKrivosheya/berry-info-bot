@@ -9,7 +9,7 @@ from app.services.knowledge_base.normalizer import (
     slugify,
     split_labelled_cell,
 )
-from app.services.knowledge_base.types import FileOverride
+from app.services.knowledge_base.types import SourceOverride
 
 
 @dataclass(slots=True)
@@ -23,17 +23,43 @@ def render_documents(
     rows: list[list[str]],
     source_slug: str,
     title: str,
-    override: FileOverride,
+    override: SourceOverride,
+    infer_headers_in_fallback: bool = False,
 ) -> tuple[str, list[RenderedMarkdown]]:
     """Render markdown documents using deterministic mode dispatch."""
 
+    requested_profile = override.parser_profile
+    if requested_profile == "outline_sheet":
+        msg = "outline_sheet profile must be rendered via the workbook outline parser."
+        raise ValueError(msg)
+
     header_map = _build_header_map(rows[0])
-    mode_resolvers = (
-        _qa_mode_render,
-        _section_mode_render,
-        _column_split_mode_render,
-    )
-    for resolver in mode_resolvers:
+    mode_resolvers = {
+        "qa_table": _qa_mode_render,
+        "section_table": _section_mode_render,
+        "column_split": _column_split_mode_render,
+    }
+    if requested_profile is not None:
+        resolver = mode_resolvers.get(requested_profile)
+        if resolver is None:
+            msg = f"Unsupported parser profile '{requested_profile}'."
+            raise ValueError(msg)
+        resolved = resolver(
+            rows=rows,
+            source_slug=source_slug,
+            title=title,
+            override=override,
+            header_map=header_map,
+        )
+        if resolved is None:
+            msg = (
+                f"Configured parser profile '{requested_profile}' "
+                "could not be resolved for the sheet."
+            )
+            raise ValueError(msg)
+        return resolved
+
+    for resolver in mode_resolvers.values():
         resolved = resolver(
             rows=rows,
             source_slug=source_slug,
@@ -44,18 +70,23 @@ def render_documents(
         if resolved is not None:
             return resolved
 
-    return _fallback_mode_render(rows=rows, source_slug=source_slug, title=title)
+    return _fallback_mode_render(
+        rows=rows,
+        source_slug=source_slug,
+        title=title,
+        infer_headers=infer_headers_in_fallback,
+    )
 
 
 def infer_fallback_headers(rows: list[list[str]]) -> tuple[list[str] | None, list[list[str]]]:
     """Infer header presence for ambiguous fallback parsing."""
 
-    if len(rows) < 2:
+    if len(rows) < 3:
         return None, rows
 
     first_row = rows[0]
     non_empty_headers = [cell for cell in first_row if cell]
-    if len(non_empty_headers) < 2:
+    if len(non_empty_headers) < 3:
         return None, rows
 
     header_keys = [normalize_header_name(cell) for cell in non_empty_headers]
@@ -73,7 +104,7 @@ def _qa_mode_render(
     rows: list[list[str]],
     source_slug: str,
     title: str,
-    override: FileOverride,
+    override: SourceOverride,
     header_map: dict[str, int],
 ) -> tuple[str, list[RenderedMarkdown]] | None:
     qa_mode = _resolve_qa_mode(override, header_map)
@@ -93,7 +124,7 @@ def _qa_mode_render(
             content=_compose_document(title, body),
         )
     ]
-    return "qa", docs
+    return "qa_table", docs
 
 
 def _section_mode_render(
@@ -101,7 +132,7 @@ def _section_mode_render(
     rows: list[list[str]],
     source_slug: str,
     title: str,
-    override: FileOverride,
+    override: SourceOverride,
     header_map: dict[str, int],
 ) -> tuple[str, list[RenderedMarkdown]] | None:
     section_mode = _resolve_section_mode(override, header_map)
@@ -119,7 +150,7 @@ def _section_mode_render(
             content=_compose_document(title, body),
         )
     ]
-    return "section", docs
+    return "section_table", docs
 
 
 def _column_split_mode_render(
@@ -127,7 +158,7 @@ def _column_split_mode_render(
     rows: list[list[str]],
     source_slug: str,
     title: str,
-    override: FileOverride,
+    override: SourceOverride,
     header_map: dict[str, int],
 ) -> tuple[str, list[RenderedMarkdown]] | None:
     split_mode = _resolve_split_mode(override, header_map)
@@ -149,8 +180,12 @@ def _fallback_mode_render(
     rows: list[list[str]],
     source_slug: str,
     title: str,
+    infer_headers: bool,
 ) -> tuple[str, list[RenderedMarkdown]]:
-    inferred_headers, data_rows = infer_fallback_headers(rows)
+    inferred_headers: list[str] | None = None
+    data_rows = rows
+    if infer_headers:
+        inferred_headers, data_rows = infer_fallback_headers(rows)
     body = _render_fallback_body(headers=inferred_headers, data_rows=data_rows)
     docs = [
         RenderedMarkdown(
@@ -161,7 +196,7 @@ def _fallback_mode_render(
     return "fallback", docs
 
 
-def _resolve_qa_mode(override: FileOverride, header_map: dict[str, int]) -> dict[str, int] | None:
+def _resolve_qa_mode(override: SourceOverride, header_map: dict[str, int]) -> dict[str, int] | None:
     if not override.question_column_name or not override.answer_column_name:
         return None
 
@@ -182,7 +217,7 @@ def _resolve_qa_mode(override: FileOverride, header_map: dict[str, int]) -> dict
 
 
 def _resolve_section_mode(
-    override: FileOverride,
+    override: SourceOverride,
     header_map: dict[str, int],
 ) -> dict[str, int] | None:
     if not override.section_column_name:
@@ -195,11 +230,10 @@ def _resolve_section_mode(
 
 
 def _resolve_split_mode(
-    override: FileOverride,
+    override: SourceOverride,
     header_map: dict[str, int],
 ) -> dict[str, int] | None:
-    split_mode = (override.split_mode or "single").casefold()
-    if split_mode != "column" or not override.split_column_name:
+    if not override.split_column_name:
         return None
 
     split_index = _resolve_column_index(header_map, override.split_column_name)

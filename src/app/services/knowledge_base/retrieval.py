@@ -14,7 +14,10 @@ from app.services.knowledge_base.kb_openai_config import (
     clamp_search_max_results,
     get_kb_openai_settings,
 )
-from app.services.knowledge_base.manifest_reader import load_manifest_sync_items
+from app.services.knowledge_base.manifest_reader import (
+    load_manifest_error_workbooks,
+    load_manifest_sync_items,
+)
 from app.services.knowledge_base.search_policy import apply_relevance_policy, normalize_search_hits
 from app.services.knowledge_base.sync_planner import build_sync_plan
 from app.services.knowledge_base.types_openai import (
@@ -99,6 +102,7 @@ class KnowledgeBaseRetrievalService:
         manifest_path = manifest_path.resolve()
         self.ensure_vector_store()
         items = load_manifest_sync_items(manifest_path)
+        manifest_error_workbooks = load_manifest_error_workbooks(manifest_path)
         plan = build_sync_plan(
             items=items,
             only_logical_id=only_logical_id,
@@ -131,6 +135,25 @@ class KnowledgeBaseRetrievalService:
             )
 
         existing_files = self.list_vector_store_files() if replace else []
+        if replace and existing_files:
+            stale_records = _collect_stale_workbook_records(
+                existing_files=existing_files,
+                items=plan.selected_items,
+                blocked_workbooks=manifest_error_workbooks,
+            )
+            if stale_records:
+                delete_report = self._vector_store_client.delete_file_records(
+                    stale_records,
+                    delete_underlying=True,
+                    dry_run=dry_run,
+                )
+                report.deleted_count += delete_report.deleted_count
+                report.deleted_underlying_count += delete_report.deleted_underlying_count
+                stale_file_ids = {record.file_id for record in stale_records}
+                existing_files = [
+                    record for record in existing_files if record.file_id not in stale_file_ids
+                ]
+
         for logical_id, grouped_items in plan.grouped_items.items():
             if replace:
                 try:
@@ -250,3 +273,101 @@ def _clamp_max_results(value: int) -> int:
 
 def _clamp_score_threshold(value: float) -> float:
     return clamp_score_threshold(value)
+
+
+def _collect_stale_workbook_records(
+    *,
+    existing_files: list[VectorStoreFileRecord],
+    items,
+    blocked_workbooks: set[str],
+) -> list[VectorStoreFileRecord]:
+    workbook_state = _build_workbook_state(items)
+    stale_records: list[VectorStoreFileRecord] = []
+    seen_file_ids: set[str] = set()
+
+    for record in existing_files:
+        workbook_file = _attribute_as_str(record.attributes.get("workbook_file"))
+        if not workbook_file or workbook_file in blocked_workbooks:
+            continue
+
+        state = workbook_state.get(workbook_file)
+        if state is None:
+            continue
+
+        if _is_stale_workbook_record(record, state):
+            if record.file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(record.file_id)
+            stale_records.append(record)
+
+    return stale_records
+
+
+def _build_workbook_state(items) -> dict[str, dict[str, object]]:
+    workbook_state: dict[str, dict[str, object]] = {}
+    for item in items:
+        if item.source_format != "xlsx" or not item.workbook_file:
+            continue
+
+        state = workbook_state.setdefault(
+            item.workbook_file,
+            {
+                "logical_ids": set(),
+                "sheet_names": {},
+                "sheet_indexes": {},
+            },
+        )
+        logical_ids = state["logical_ids"]
+        if isinstance(logical_ids, set):
+            logical_ids.add(item.logical_id)
+
+        if item.sheet_name:
+            sheet_names = state["sheet_names"]
+            if isinstance(sheet_names, dict):
+                allowed_ids = sheet_names.setdefault(item.sheet_name, set())
+                if isinstance(allowed_ids, set):
+                    allowed_ids.add(item.logical_id)
+
+        if item.sheet_index is not None:
+            sheet_indexes = state["sheet_indexes"]
+            if isinstance(sheet_indexes, dict):
+                allowed_ids = sheet_indexes.setdefault(str(item.sheet_index), set())
+                if isinstance(allowed_ids, set):
+                    allowed_ids.add(item.logical_id)
+
+    return workbook_state
+
+
+def _is_stale_workbook_record(
+    record: VectorStoreFileRecord,
+    state: dict[str, object],
+) -> bool:
+    record_logical_id = _attribute_as_str(record.attributes.get("logical_id"))
+    record_sheet_index = _attribute_as_str(record.attributes.get("sheet_index"))
+    record_sheet_name = _attribute_as_str(record.attributes.get("sheet_name"))
+
+    sheet_indexes = state.get("sheet_indexes", {})
+    if isinstance(sheet_indexes, dict) and record_sheet_index:
+        allowed_ids = sheet_indexes.get(record_sheet_index)
+        if isinstance(allowed_ids, set):
+            return record_logical_id not in allowed_ids
+        return True
+
+    sheet_names = state.get("sheet_names", {})
+    if isinstance(sheet_names, dict) and record_sheet_name:
+        allowed_ids = sheet_names.get(record_sheet_name)
+        if isinstance(allowed_ids, set):
+            return record_logical_id not in allowed_ids
+        return True
+
+    logical_ids = state.get("logical_ids", set())
+    if isinstance(logical_ids, set) and record_logical_id:
+        return record_logical_id not in logical_ids
+    return False
+
+
+def _attribute_as_str(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None

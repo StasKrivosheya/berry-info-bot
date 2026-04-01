@@ -34,6 +34,7 @@ class RuntimeState:
     bot: Bot | None = None
     dispatcher: Dispatcher | None = None
     polling_task: asyncio.Task[None] | None = None
+    polling_exception: BaseException | None = None
 
 
 async def _run_polling_loop(dispatcher: Dispatcher, bot: Bot) -> None:
@@ -52,6 +53,29 @@ async def _run_polling_loop(dispatcher: Dispatcher, bot: Bot) -> None:
         logger.info(LOG_EVENT_POLLING_STOPPED)
 
 
+def _record_polling_failure(state: RuntimeState, task: asyncio.Task[None]) -> None:
+    """Persist unexpected polling task failures so readiness checks can react."""
+
+    if state.polling_exception is not None or task.cancelled():
+        return
+
+    try:
+        exception = task.exception()
+    except asyncio.CancelledError:
+        return
+
+    if exception is None:
+        exception = RuntimeError("Telegram polling stopped unexpectedly.")
+        logger.error("%s reason=unexpected_stop", LOG_EVENT_POLLING_FAILED)
+    else:
+        logger.error(
+            LOG_EVENT_POLLING_FAILED,
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )
+
+    state.polling_exception = exception
+
+
 async def _startup_runtime(state: RuntimeState, settings: Settings) -> None:
     """Initialize resources and start polling as a managed background task."""
 
@@ -63,6 +87,7 @@ async def _startup_runtime(state: RuntimeState, settings: Settings) -> None:
         _run_polling_loop(state.dispatcher, state.bot),
         name=POLLING_TASK_NAME,
     )
+    state.polling_task.add_done_callback(lambda task: _record_polling_failure(state, task))
 
 
 async def _shutdown_runtime(state: RuntimeState) -> None:
@@ -73,16 +98,7 @@ async def _shutdown_runtime(state: RuntimeState) -> None:
             state.polling_task.cancel()
             with suppress(asyncio.CancelledError):
                 await state.polling_task
-        else:
-            if state.polling_task.cancelled():
-                logger.info(LOG_EVENT_POLLING_CANCELLED)
-            else:
-                exception = state.polling_task.exception()
-                if exception is not None:
-                    logger.error(
-                        LOG_EVENT_POLLING_FAILED,
-                        exc_info=(type(exception), exception, exception.__traceback__),
-                    )
+        _record_polling_failure(state, state.polling_task)
 
     if state.bot is not None:
         await state.bot.session.close()

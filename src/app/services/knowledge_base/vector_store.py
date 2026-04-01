@@ -13,6 +13,7 @@ from app.services.knowledge_base.kb_openai_config import (
 )
 from app.services.knowledge_base.types_openai import (
     Attributes,
+    DeleteRecordsReport,
     DeleteReport,
     UploadResult,
     VectorStoreFileRecord,
@@ -160,6 +161,63 @@ class KnowledgeBaseVectorStoreClient:
         return DeleteReport(
             logical_id=logical_id,
             matched_count=len(matching_files),
+            deleted_count=deleted_count,
+            deleted_underlying_count=deleted_underlying_count,
+            deleted_file_ids=deleted_ids,
+        )
+
+    def delete_file_records(
+        self,
+        records: list[VectorStoreFileRecord],
+        *,
+        delete_underlying: bool = True,
+        dry_run: bool = False,
+    ) -> DeleteRecordsReport:
+        """Delete explicit vector-store file records."""
+
+        unique_records: list[VectorStoreFileRecord] = []
+        seen_file_ids: set[str] = set()
+        for record in records:
+            if record.file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(record.file_id)
+            unique_records.append(record)
+
+        deleted_count = 0
+        deleted_underlying_count = 0
+        deleted_ids: list[str] = []
+
+        if dry_run:
+            deleted_count = len(unique_records)
+            deleted_underlying_count = len(unique_records) if delete_underlying else 0
+            deleted_ids = [record.file_id for record in unique_records]
+        else:
+            for record in unique_records:
+                self._client.vector_stores.files.delete(
+                    file_id=record.file_id,
+                    vector_store_id=self._vector_store_id,
+                )
+                deleted_count += 1
+                deleted_ids.append(record.file_id)
+
+                if delete_underlying:
+                    self._client.files.delete(record.file_id)
+                    deleted_underlying_count += 1
+
+        logger.info(
+            (
+                "%s vector_store_id=%s scope=explicit_records matched=%s deleted=%s "
+                "deleted_underlying=%s dry_run=%s"
+            ),
+            LOG_EVENT_VECTOR_STORE_DELETE,
+            self._vector_store_id,
+            len(unique_records),
+            deleted_count,
+            deleted_underlying_count,
+            dry_run,
+        )
+        return DeleteRecordsReport(
+            matched_count=len(unique_records),
             deleted_count=deleted_count,
             deleted_underlying_count=deleted_underlying_count,
             deleted_file_ids=deleted_ids,

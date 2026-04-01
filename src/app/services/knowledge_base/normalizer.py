@@ -9,6 +9,45 @@ ASCII_SLUG_RE = re.compile(r"[^a-z0-9]+")
 UNICODE_SLUG_RE = re.compile(r"[^\w]+", flags=re.UNICODE)
 MULTI_DASH_RE = re.compile(r"-{2,}")
 LABELLED_CELL_RE = re.compile(r"^\s*([^:\n]{1,80}):\s*(.+?)\s*$", flags=re.DOTALL)
+CYRILLIC_SLUG_MAP = {
+    "\u0430": "a",
+    "\u0431": "b",
+    "\u0432": "v",
+    "\u0433": "h",
+    "\u0491": "g",
+    "\u0434": "d",
+    "\u0435": "e",
+    "\u0454": "ie",
+    "\u0436": "zh",
+    "\u0437": "z",
+    "\u0438": "y",
+    "\u0456": "i",
+    "\u0457": "i",
+    "\u0439": "i",
+    "\u043a": "k",
+    "\u043b": "l",
+    "\u043c": "m",
+    "\u043d": "n",
+    "\u043e": "o",
+    "\u043f": "p",
+    "\u0440": "r",
+    "\u0441": "s",
+    "\u0442": "t",
+    "\u0443": "u",
+    "\u0444": "f",
+    "\u0445": "kh",
+    "\u0446": "ts",
+    "\u0447": "ch",
+    "\u0448": "sh",
+    "\u0449": "shch",
+    "\u044c": "",
+    "\u044e": "iu",
+    "\u044f": "ia",
+    "\u0451": "io",
+    "\u044d": "e",
+    "\u044b": "y",
+    "\u044a": "",
+}
 
 
 def normalize_cell_text(value: str) -> str:
@@ -45,6 +84,29 @@ def is_non_empty_text(value: str) -> bool:
 
 def slugify(value: str) -> str:
     """Generate deterministic slug values for file names and logical ids."""
+
+    normalized = normalize_cell_text(value).casefold()
+    if not normalized:
+        return "item"
+
+    transliterated = "".join(
+        CYRILLIC_SLUG_MAP.get(character, character) for character in normalized
+    )
+    ascii_text = unicodedata.normalize("NFKD", transliterated).encode("ascii", "ignore").decode(
+        "ascii"
+    )
+    ascii_slug = ASCII_SLUG_RE.sub("-", ascii_text).strip("-")
+    ascii_slug = MULTI_DASH_RE.sub("-", ascii_slug)
+    if ascii_slug:
+        return ascii_slug
+
+    unicode_slug = UNICODE_SLUG_RE.sub("-", normalized).strip("-").replace("_", "-")
+    unicode_slug = MULTI_DASH_RE.sub("-", unicode_slug)
+    return unicode_slug or "item"
+
+
+def legacy_ascii_slugify(value: str) -> str:
+    """Reproduce the earlier ASCII-stripping slug behavior for cleanup compatibility."""
 
     normalized = normalize_cell_text(value).casefold()
     if not normalized:
