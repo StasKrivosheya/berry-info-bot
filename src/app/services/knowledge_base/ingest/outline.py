@@ -1,15 +1,17 @@
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.knowledge_base.markdown_render import RenderedMarkdown
-from app.services.knowledge_base.normalizer import normalize_cell_text, split_labelled_cell
-from app.services.knowledge_base.types import ParseDiagnostic, SourceOverride
-from app.services.knowledge_base.xlsx_ingest import (
+from app.services.knowledge_base.ingest.markdown import RenderedMarkdown
+from app.services.knowledge_base.ingest.xlsx import (
     PreparedWorkbookSheet,
     SheetRow,
     select_outline_rows,
 )
+from app.services.knowledge_base.normalizer import normalize_cell_text, split_labelled_cell
+from app.services.knowledge_base.types import ParseDiagnostic, SourceOverride
 
 HEADER_CUE_ROW_HEIGHT = 22.0
 HEADER_MAX_TEXT_LENGTH = 100
@@ -299,7 +301,7 @@ def _looks_like_display_header(text: str) -> bool:
     letters = [character for character in normalized if character.isalpha()]
     if letters and normalized == normalized.upper():
         return True
-    return "«" in normalized and "»" in normalized and len(normalized.split()) <= HEADER_MAX_WORDS
+    return "В«" in normalized and "В»" in normalized and len(normalized.split()) <= HEADER_MAX_WORDS
 
 
 def _dedupe_diagnostics(diagnostics: list[ParseDiagnostic]) -> list[ParseDiagnostic]:
@@ -320,3 +322,4 @@ def _compose_document(title: str, body: str) -> str:
     if not normalized_body:
         return f"# {normalized_title}\n"
     return f"# {normalized_title}\n\n{normalized_body}\n"
+

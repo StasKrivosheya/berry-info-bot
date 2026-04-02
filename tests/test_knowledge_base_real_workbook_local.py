@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from app.services.knowledge_base.parser import parse_knowledge_base
+from app.services.knowledge_base.ingest.parser import parse_knowledge_base
 
-REAL_WORKBOOK_PATH = Path("data/knowledge_base/raw_csv") / (
+REAL_WORKBOOK_PATH = Path("data/knowledge_base/raw_sources") / (
     "\u0406\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0456\u0439\u043d\u0456 "
     "\u043f\u043e\u0432\u0456\u0434\u043e\u043c\u043b\u0435\u043d\u043d\u044f 26.xlsx"
 )
@@ -45,3 +45,4 @@ def test_local_real_workbook_first_five_sheets_parse_stably(tmp_path: Path) -> N
     assert [entry.content_hash_sha256 for entry in first.entries] == [
         entry.content_hash_sha256 for entry in second.entries
     ]
+

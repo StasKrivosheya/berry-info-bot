@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import pytest
 
-from app.services.knowledge_base.manifest_reader import (
+from app.services.knowledge_base.manifest.reader import (
     load_manifest_error_workbooks,
     load_manifest_sync_items,
 )
@@ -167,3 +167,4 @@ def test_load_manifest_error_workbooks_collects_xlsx_failures(tmp_path: Path) ->
     )
 
     assert load_manifest_error_workbooks(manifest_path) == {"book.xlsx"}
+

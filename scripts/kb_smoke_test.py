@@ -12,7 +12,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from app.services.knowledge_base.cli_output import render_smoke_test_output  # noqa: E402
-from app.services.knowledge_base.kb_openai_config import get_kb_openai_settings  # noqa: E402
+from app.services.knowledge_base.retrieval.config import get_kb_openai_settings  # noqa: E402
 from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService  # noqa: E402
 
 logger = logging.getLogger(__name__)

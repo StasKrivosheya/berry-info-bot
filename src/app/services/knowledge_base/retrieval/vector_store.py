@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from pathlib import Path
@@ -6,8 +6,8 @@ from typing import Any
 
 from openai import OpenAI
 
-from app.services.knowledge_base.attribute_utils import normalize_attributes
-from app.services.knowledge_base.kb_openai_config import (
+from app.services.knowledge_base.retrieval.attributes import normalize_attributes
+from app.services.knowledge_base.retrieval.config import (
     KnowledgeBaseOpenAISettings,
     get_kb_openai_settings,
 )
@@ -334,3 +334,5 @@ class KnowledgeBaseVectorStoreClient:
             )
         self._filename_cache[file_id] = filename
         return filename
+
+

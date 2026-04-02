@@ -1,26 +1,31 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.services.knowledge_base.csv_ingest import PreparedTable, read_and_prepare_csv
-from app.services.knowledge_base.manifest_writer import write_manifest
-from app.services.knowledge_base.markdown_render import render_documents
+from app.services.knowledge_base.ingest.config import (
+    load_parse_config as load_parse_config_impl,
+)
+from app.services.knowledge_base.ingest.config import (
+    resolve_file_override,
+    resolve_logical_id,
+    resolve_source_override,
+)
+from app.services.knowledge_base.ingest.csv import PreparedTable, read_and_prepare_csv
+from app.services.knowledge_base.ingest.markdown import render_documents
+from app.services.knowledge_base.ingest.outline import OutlineParseError, render_outline_sheet
+from app.services.knowledge_base.ingest.xlsx import (
+    PreparedWorkbookSheet,
+    build_table_from_sheet,
+    load_visible_workbook_sheets,
+)
+from app.services.knowledge_base.manifest.writer import write_manifest
 from app.services.knowledge_base.normalizer import (
     compute_content_hash,
     legacy_ascii_slugify,
     prettify_title,
     slugify,
-)
-from app.services.knowledge_base.outline_parser import OutlineParseError, render_outline_sheet
-from app.services.knowledge_base.parser_config import (
-    load_parse_config as load_parse_config_impl,
-)
-from app.services.knowledge_base.parser_config import (
-    resolve_file_override,
-    resolve_logical_id,
-    resolve_source_override,
 )
 from app.services.knowledge_base.types import (
     BatchParseResult,
@@ -32,11 +37,6 @@ from app.services.knowledge_base.types import (
     SelectableSourceFormat,
     SourceFormat,
     SourceOverride,
-)
-from app.services.knowledge_base.xlsx_ingest import (
-    PreparedWorkbookSheet,
-    build_table_from_sheet,
-    load_visible_workbook_sheets,
 )
 
 logger = logging.getLogger(__name__)
@@ -523,3 +523,4 @@ def _build_parse_error(
         message=str(exc),
         diagnostics=diagnostics,
     )
+

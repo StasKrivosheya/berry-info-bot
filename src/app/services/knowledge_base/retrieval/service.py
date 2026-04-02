@@ -1,40 +1,48 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from pathlib import Path
 from typing import Any
 
-from app.services.knowledge_base.attribute_utils import (
+from app.services.knowledge_base.manifest.reader import (
+    load_manifest_error_workbooks,
+    load_manifest_sync_items,
+)
+from app.services.knowledge_base.manifest.sync_planner import build_sync_plan
+from app.services.knowledge_base.query.text import normalize_query_text
+from app.services.knowledge_base.retrieval.attributes import (
     build_filters_payload,
     build_search_attributes,
 )
-from app.services.knowledge_base.kb_openai_config import (
+from app.services.knowledge_base.retrieval.config import (
     KnowledgeBaseOpenAISettings,
     clamp_score_threshold,
     clamp_search_max_results,
     get_kb_openai_settings,
 )
-from app.services.knowledge_base.manifest_reader import (
-    load_manifest_error_workbooks,
-    load_manifest_sync_items,
+from app.services.knowledge_base.retrieval.search_policy import (
+    apply_relevance_policy,
+    normalize_search_hits,
 )
-from app.services.knowledge_base.search_policy import apply_relevance_policy, normalize_search_hits
-from app.services.knowledge_base.sync_planner import build_sync_plan
+from app.services.knowledge_base.retrieval.vector_store import KnowledgeBaseVectorStoreClient
 from app.services.knowledge_base.types_openai import (
     Attributes,
+    SearchHit,
     SearchResponse,
     SyncFailure,
     SyncReport,
     VectorStoreFileRecord,
 )
-from app.services.knowledge_base.vector_store import KnowledgeBaseVectorStoreClient
 
 logger = logging.getLogger(__name__)
 
 LOG_EVENT_SYNC_STARTED = "kb_vector_sync_started"
 LOG_EVENT_SYNC_COMPLETED = "kb_vector_sync_completed"
 LOG_EVENT_SYNC_SKIPPED_BY_FILTER = "kb_vector_sync_filtered"
+LOG_EVENT_SEARCH_REQUEST = "kb_vector_search_request"
 LOG_EVENT_SEARCH_COMPLETED = "kb_vector_search_completed"
+LOG_EVENT_SEARCH_FILTERED = "kb_vector_search_filtered"
+LOG_EVENT_SEARCH_REJECTED_HIT = "kb_vector_search_hit_rejected"
 
 
 class KnowledgeBaseRetrievalService:
@@ -243,6 +251,22 @@ class KnowledgeBaseRetrievalService:
             logical_id=logical_id,
             language="uk",
         )
+        normalized_query = normalize_query_text(query)
+        logger.debug(
+            (
+                "%s query=%r normalized_query=%r max_results=%s rewrite_query=%s "
+                "threshold=%s category=%s logical_id=%s filters=%s"
+            ),
+            LOG_EVENT_SEARCH_REQUEST,
+            query,
+            normalized_query,
+            resolved_max_results,
+            rewrite_query,
+            resolved_threshold,
+            category,
+            logical_id,
+            merged_filters,
+        )
         response = self._vector_store_client.search(
             query=query,
             max_num_results=resolved_max_results,
@@ -256,10 +280,19 @@ class KnowledgeBaseRetrievalService:
             threshold=resolved_threshold,
             max_results=resolved_max_results,
         )
+        _log_search_filtering(
+            query=query,
+            normalized_query=normalized_query,
+            hits=normalized_hits,
+            result=result,
+            threshold=resolved_threshold,
+            max_results=resolved_max_results,
+        )
         logger.info(
-            "%s query=%s result_count=%s top_score=%s threshold=%s",
+            "%s query=%s raw_hit_count=%s result_count=%s top_score=%s threshold=%s",
             LOG_EVENT_SEARCH_COMPLETED,
             query,
+            len(normalized_hits),
             len(result.results),
             result.top_score,
             result.used_threshold,
@@ -371,3 +404,67 @@ def _attribute_as_str(value: object) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _log_search_filtering(
+    *,
+    query: str,
+    normalized_query: str,
+    hits: list[SearchHit],
+    result: SearchResponse,
+    threshold: float,
+    max_results: int,
+) -> None:
+    logger.debug(
+        (
+            "%s query=%r normalized_query=%r raw_hit_count=%s "
+            "filtered_hit_count=%s threshold=%s top_score=%s "
+            "fallback_triggered=%s"
+        ),
+        LOG_EVENT_SEARCH_FILTERED,
+        query,
+        normalized_query,
+        len(hits),
+        len(result.results),
+        threshold,
+        result.top_score,
+        result.fallback_triggered,
+    )
+
+    if not hits:
+        return
+
+    accepted_file_ids = {hit.file_id for hit in result.results}
+    threshold_rank = 0
+    for hit in hits:
+        if hit.score < threshold:
+            reason = "score_below_threshold"
+        else:
+            threshold_rank += 1
+            if result.fallback_triggered:
+                reason = "top_score_below_threshold"
+            elif hit.file_id not in accepted_file_ids and threshold_rank > max_results:
+                reason = "trimmed_by_max_results"
+            elif hit.file_id in accepted_file_ids:
+                continue
+            else:
+                reason = "filtered_out"
+
+        logger.debug(
+            "%s reason=%s logical_id=%s file=%s score=%s threshold=%s",
+            LOG_EVENT_SEARCH_REJECTED_HIT,
+            reason,
+            _search_hit_logical_id(hit),
+            hit.filename,
+            hit.score,
+            threshold,
+        )
+
+
+def _search_hit_logical_id(hit: SearchHit) -> str:
+    logical_id = _attribute_as_str(hit.attributes.get("logical_id"))
+    if logical_id:
+        return logical_id
+    return Path(hit.filename).stem
+
+

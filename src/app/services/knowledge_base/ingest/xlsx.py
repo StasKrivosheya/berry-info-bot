@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -7,7 +7,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string, range_boundaries
 
-from app.services.knowledge_base.csv_ingest import PreparedTable
+from app.services.knowledge_base.ingest.csv import PreparedTable
 from app.services.knowledge_base.normalizer import normalize_cell_text
 from app.services.knowledge_base.types import SourceOverride
 
@@ -232,3 +232,4 @@ def _cell_allowed(
     if not content_regions:
         return True
     return any(region.contains(row_index, column_index) for region in content_regions)
+

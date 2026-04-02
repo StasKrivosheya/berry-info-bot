@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-from app.services.knowledge_base.attribute_utils import normalize_attributes
+from app.services.knowledge_base.retrieval.attributes import normalize_attributes
 from app.services.knowledge_base.types_openai import (
     NO_RELEVANT_INFO_FALLBACK,
     SearchHit,
@@ -67,4 +67,6 @@ def _extract_text(content_items: object) -> str:
         if item_type == "text" and isinstance(item_text, str) and item_text.strip():
             chunks.append(item_text.strip())
     return "\n\n".join(chunks)
+
+
 

@@ -1,14 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from app.services.knowledge_base.parser import parse_knowledge_base
+from app.services.knowledge_base.ingest.parser import parse_knowledge_base
 from app.services.knowledge_base.types import SelectableSourceFormat
 
-DEFAULT_INPUT_DIR = Path("data/knowledge_base/raw_csv")
+DEFAULT_INPUT_DIR = Path("data/knowledge_base/raw_sources")
 DEFAULT_OUTPUT_DIR = Path("data/knowledge_base/processed")
 DEFAULT_CONFIG_PATH = Path("data/knowledge_base/parser_config.toml")
 
@@ -116,3 +116,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

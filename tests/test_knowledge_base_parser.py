@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -7,8 +7,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from app.services.knowledge_base.cli import main
-from app.services.knowledge_base.markdown_render import infer_fallback_headers
-from app.services.knowledge_base.parser import parse_knowledge_base
+from app.services.knowledge_base.ingest.markdown import infer_fallback_headers
+from app.services.knowledge_base.ingest.parser import parse_knowledge_base
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -757,3 +757,4 @@ def test_infer_fallback_headers_accepts_larger_header_like_tables() -> None:
 
     assert inferred_headers == rows[0]
     assert data_rows == rows[1:]
+

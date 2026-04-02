@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.knowledge_base.sync_planner import build_sync_plan
+from app.services.knowledge_base.manifest.sync_planner import build_sync_plan
 from app.services.knowledge_base.types_openai import ManifestSyncItem
 
 
@@ -67,3 +67,4 @@ def test_build_sync_plan_applies_logical_id_and_category_filters() -> None:
     assert by_category.selected_count == 2
     assert by_category.skipped_count == 1
     assert list(by_category.grouped_items.keys()) == ["faq", "support"]
+

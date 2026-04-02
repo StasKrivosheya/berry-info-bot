@@ -1,11 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.services.knowledge_base.kb_openai_config import KnowledgeBaseOpenAISettings
-from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService
+from app.services.knowledge_base.retrieval.config import KnowledgeBaseOpenAISettings
+from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
+from app.services.knowledge_base.retrieval.vector_store import filter_files_by_logical_id
 from app.services.knowledge_base.types_openai import (
     DeleteRecordsReport,
     DeleteReport,
@@ -14,7 +15,6 @@ from app.services.knowledge_base.types_openai import (
     UploadResult,
     VectorStoreFileRecord,
 )
-from app.services.knowledge_base.vector_store import filter_files_by_logical_id
 
 
 class FakeVectorStoreClient:
@@ -438,3 +438,5 @@ def test_search_allows_rewrite_query_override() -> None:
     assert response.fallback_triggered is False
     payload = fake_client.search_payloads[0]
     assert payload["rewrite_query"] is True
+
+
