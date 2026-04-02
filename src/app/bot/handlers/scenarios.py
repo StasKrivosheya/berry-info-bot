@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.vector_search_debug import (
+    VS_COMMAND_NAME,
+    VS_ERROR_TEXT,
+    VS_USAGE_TEXT,
+    extract_query_text,
+    format_search_messages,
+    split_for_telegram,
+)
 from app.bot.scenarios.callbacks import NAV_ACTION_BACK, NAV_ACTION_OPEN, ScenarioNavCallback
 from app.bot.scenarios.catalog import (
     KEYWORD_2026_RESPONSE,
@@ -18,9 +28,17 @@ from app.bot.scenarios.catalog import (
 )
 from app.bot.scenarios.keyboards import build_main_menu_keyboard, build_scenario_keyboard
 from app.bot.scenarios.navigation import ScenarioMessenger, resolve_chat_id
+from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService
 
 router = Router(name="scenarios")
 messenger = ScenarioMessenger()
+logger = logging.getLogger(__name__)
+
+LOG_EVENT_BOT_VS_SEARCH_FAILED = "bot_vs_search_failed"
+
+
+def _create_retrieval_service() -> KnowledgeBaseRetrievalService:
+    return KnowledgeBaseRetrievalService()
 
 
 @router.message(CommandStart())
@@ -38,6 +56,46 @@ async def show_main_menu(message: Message) -> None:
         text=MENU_MESSAGE_TEXT,
         reply_markup=build_main_menu_keyboard(),
     )
+
+
+@router.message(Command(VS_COMMAND_NAME))
+async def vector_search_handler(message: Message, command: CommandObject) -> None:
+    """Run vector search in-chat for development and QA checks."""
+
+    if message.from_user is None:
+        return
+
+    query = extract_query_text(command)
+    if not query:
+        await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=VS_USAGE_TEXT,
+            parse_mode=None,
+        )
+        return
+
+    try:
+        response = _create_retrieval_service().search(
+            query=query,
+            rewrite_query=False,
+        )
+        result_messages = format_search_messages(query, response)
+    except Exception:
+        logger.exception(LOG_EVENT_BOT_VS_SEARCH_FAILED)
+        await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=VS_ERROR_TEXT,
+            parse_mode=None,
+        )
+        return
+
+    for rendered_message in result_messages:
+        for chunk in split_for_telegram(rendered_message):
+            await message.bot.send_message(
+                chat_id=message.chat.id,
+                text=chunk,
+                parse_mode=None,
+            )
 
 
 @router.message(F.text.in_(MAIN_MENU_ACTIONS.keys()))

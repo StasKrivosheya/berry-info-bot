@@ -237,6 +237,21 @@ The smoke test prints top hits (score, filename, logical_id, category, excerpt).
 relevant enough, it prints: `No relevant information found in the knowledge base.`
 Use `--rewrite-query` to enable query rewriting when needed for experiments.
 
+### Telegram dev command
+
+For test/dev checks in chat, the bot also supports:
+
+```text
+/vs your question goes here
+```
+
+It returns one message per found result. Each message has:
+- service block (score, file name, file id, logical_id, category, threshold/top score)
+- text block (full found text, without excerpt trimming)
+
+If no relevant result is found, it returns a service block with fallback status and the fallback text.
+This command is intended for development/testing convenience.
+
 ## Security note
 
 - Never commit real secrets to tracked files.
