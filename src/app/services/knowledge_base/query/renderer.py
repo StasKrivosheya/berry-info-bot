@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from app.services.knowledge_base.query_types import AnswerBlock, QueryAnswerResult
+from app.services.knowledge_base.query.types import AnswerBlock, QueryAnswerResult
 
 
 def render_query_answer(result: QueryAnswerResult) -> str:
@@ -28,3 +28,4 @@ def _render_block(block: AnswerBlock) -> str:
     elif block.body:
         parts.append(block.body)
     return "\n".join(parts).strip()
+

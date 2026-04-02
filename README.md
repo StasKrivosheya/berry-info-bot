@@ -134,7 +134,7 @@ can stay as `.csv`.
 data/
   knowledge_base/
     parser_config.toml
-    raw_csv/
+    raw_sources/
       01-faq.csv
       02-catalog.csv
       03-offers.xlsx
@@ -147,7 +147,7 @@ data/
 ```
 
 Recommended source naming: `NN-topic-name.csv` or `NN-topic-name.xlsx`.
-Local source exports in `data/knowledge_base/raw_csv` are ignored by Git, so you can drop real
+Local source exports in `data/knowledge_base/raw_sources` are ignored by Git, so you can drop real
 customer workbooks there without staging them.
 When workbook or sheet names use Cyrillic, the parser automatically transliterates them into
 stable ASCII markdown filenames, so you do not need to rename tabs manually.
@@ -162,7 +162,7 @@ Custom paths:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli `
-  --input-dir data/knowledge_base/raw_csv `
+  --input-dir data/knowledge_base/raw_sources `
   --output-dir data/knowledge_base/processed `
   --config data/knowledge_base/parser_config.toml `
   --source-format xlsx

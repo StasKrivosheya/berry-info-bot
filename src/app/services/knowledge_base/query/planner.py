@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.types import (
     QueryClassification,
     QueryPlan,
     QueryScopeDetection,
@@ -94,3 +94,4 @@ def build_query_plan(
         plan.needs_structure,
     )
     return plan
+

@@ -1,18 +1,19 @@
-# ruff: noqa: RUF001
+﻿# ruff: noqa: RUF001
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from app.services.knowledge_base.query_text import (
+from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
+from app.services.knowledge_base.query.text import (
     normalize_query_text,
     shorten_text,
     strip_leading_markers,
     token_overlap_score,
     tokenize_text,
 )
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.types import (
     AnswerBlock,
     QueryAnswerResult,
     QueryPlan,
@@ -20,7 +21,6 @@ from app.services.knowledge_base.query_types import (
     StructuredDocument,
     StructuredSection,
 )
-from app.services.knowledge_base.structure_reader import KnowledgeBaseStructureReader
 from app.services.knowledge_base.types_openai import (
     NO_RELEVANT_INFO_FALLBACK,
     SearchHit,

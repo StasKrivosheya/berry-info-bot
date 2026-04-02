@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from app.services.knowledge_base.search_policy import apply_relevance_policy
+from app.services.knowledge_base.retrieval.search_policy import apply_relevance_policy
 from app.services.knowledge_base.types_openai import SearchHit
 
 
@@ -47,3 +47,4 @@ def test_apply_relevance_policy_passes_hits_at_or_above_threshold_up_to_limit() 
     assert response.fallback_triggered is False
     assert response.top_score == 0.9
     assert [item.file_id for item in response.results] == ["f1", "f2"]
+

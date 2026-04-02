@@ -147,8 +147,8 @@ env.bak/
 venv.bak/
 
 # Local knowledge-base ingestion artifacts
-data/knowledge_base/raw_csv/*.csv
-data/knowledge_base/raw_csv/*.xlsx
+data/knowledge_base/raw_sources/*.csv
+data/knowledge_base/raw_sources/*.xlsx
 data/knowledge_base/processed/manifest.json
 data/knowledge_base/processed/markdown/*.md
 

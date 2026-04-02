@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from aiogram import Router
 
-from app.bot.handlers.query_debug import router as query_debug_router
+from app.bot.handlers.debug.query_debug import router as query_debug_router
 from app.bot.handlers.scenarios import router as scenarios_router
 
 
@@ -13,3 +13,4 @@ def build_root_router() -> Router:
     root_router.include_router(query_debug_router)
     root_router.include_router(scenarios_router)
     return root_router
+

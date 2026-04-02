@@ -1,26 +1,30 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from pathlib import Path
 from typing import Any
 
-from app.services.knowledge_base.attribute_utils import (
+from app.services.knowledge_base.manifest.reader import (
+    load_manifest_error_workbooks,
+    load_manifest_sync_items,
+)
+from app.services.knowledge_base.manifest.sync_planner import build_sync_plan
+from app.services.knowledge_base.query.text import normalize_query_text
+from app.services.knowledge_base.retrieval.attributes import (
     build_filters_payload,
     build_search_attributes,
 )
-from app.services.knowledge_base.kb_openai_config import (
+from app.services.knowledge_base.retrieval.config import (
     KnowledgeBaseOpenAISettings,
     clamp_score_threshold,
     clamp_search_max_results,
     get_kb_openai_settings,
 )
-from app.services.knowledge_base.manifest_reader import (
-    load_manifest_error_workbooks,
-    load_manifest_sync_items,
+from app.services.knowledge_base.retrieval.search_policy import (
+    apply_relevance_policy,
+    normalize_search_hits,
 )
-from app.services.knowledge_base.query_text import normalize_query_text
-from app.services.knowledge_base.search_policy import apply_relevance_policy, normalize_search_hits
-from app.services.knowledge_base.sync_planner import build_sync_plan
+from app.services.knowledge_base.retrieval.vector_store import KnowledgeBaseVectorStoreClient
 from app.services.knowledge_base.types_openai import (
     Attributes,
     SearchHit,
@@ -29,7 +33,6 @@ from app.services.knowledge_base.types_openai import (
     SyncReport,
     VectorStoreFileRecord,
 )
-from app.services.knowledge_base.vector_store import KnowledgeBaseVectorStoreClient
 
 logger = logging.getLogger(__name__)
 
@@ -463,3 +466,5 @@ def _search_hit_logical_id(hit: SearchHit) -> str:
     if logical_id:
         return logical_id
     return Path(hit.filename).stem
+
+

@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from aiogram.filters import CommandObject
 
-from app.services.knowledge_base.query_types import SearchHitDebugContext
+from app.services.knowledge_base.query.types import SearchHitDebugContext
 from app.services.knowledge_base.types_openai import (
     NO_RELEVANT_INFO_FALLBACK,
     SearchHit,
@@ -147,3 +147,4 @@ def split_for_telegram(text: str, *, limit: int = TELEGRAM_MESSAGE_CHAR_LIMIT) -
         parts.append(current)
 
     return parts
+

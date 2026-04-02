@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from collections import defaultdict
 
-from app.services.knowledge_base.query_rules import INTENT_RULES, INTENT_TIE_BREAK_ORDER
-from app.services.knowledge_base.query_text import normalize_query_text
-from app.services.knowledge_base.query_types import QueryClassification, QueryIntent, RuleMatch
+from app.services.knowledge_base.query.rules import INTENT_RULES, INTENT_TIE_BREAK_ORDER
+from app.services.knowledge_base.query.text import normalize_query_text
+from app.services.knowledge_base.query.types import QueryClassification, QueryIntent, RuleMatch
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +123,4 @@ def _confidence_for_rule(intent: QueryIntent, rule_id: str) -> float:
         if rule.rule_id == rule_id and rule.intent == intent:
             return rule.confidence
     return 0.0
+

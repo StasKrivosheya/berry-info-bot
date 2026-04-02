@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001
+﻿# ruff: noqa: RUF001
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 from aiogram.filters import CommandObject
 
-from app.bot.handlers import query_debug
-from app.bot.handlers.vector_search_debug import (
+from app.bot.handlers.debug import query_debug
+from app.bot.handlers.debug.vector_search_debug import (
     VS_USAGE_TEXT,
     extract_query_text,
     format_search_messages,
     split_for_telegram,
 )
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.types import (
     AnswerBlock,
     QueryAnswerResult,
     QueryClassification,

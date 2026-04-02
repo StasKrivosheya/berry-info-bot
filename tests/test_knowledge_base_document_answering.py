@@ -1,16 +1,16 @@
-# ruff: noqa: RUF001
+﻿# ruff: noqa: RUF001
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from app.services.knowledge_base.query_classifier import classify_query_intent
-from app.services.knowledge_base.query_pipeline import KnowledgeBaseQueryPipeline
-from app.services.knowledge_base.query_planner import build_query_plan
-from app.services.knowledge_base.query_renderer import render_query_answer
-from app.services.knowledge_base.query_scope import detect_query_scope
-from app.services.knowledge_base.structure_reader import KnowledgeBaseStructureReader
+from app.services.knowledge_base.query.classifier import classify_query_intent
+from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
+from app.services.knowledge_base.query.planner import build_query_plan
+from app.services.knowledge_base.query.renderer import render_query_answer
+from app.services.knowledge_base.query.scope import detect_query_scope
+from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
 from app.services.knowledge_base.types_openai import (
     NO_RELEVANT_INFO_FALLBACK,
     SearchHit,

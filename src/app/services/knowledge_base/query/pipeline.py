@@ -1,20 +1,20 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 
-from app.services.knowledge_base.query_classifier import classify_query_intent
-from app.services.knowledge_base.query_execution import execute_query_plan
-from app.services.knowledge_base.query_planner import build_query_plan
-from app.services.knowledge_base.query_scope import detect_query_scope
-from app.services.knowledge_base.query_text import normalize_query_text
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.classifier import classify_query_intent
+from app.services.knowledge_base.query.execution import execute_query_plan
+from app.services.knowledge_base.query.planner import build_query_plan
+from app.services.knowledge_base.query.scope import detect_query_scope
+from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
+from app.services.knowledge_base.query.text import normalize_query_text
+from app.services.knowledge_base.query.types import (
     QueryAnswerResult,
     QueryClassification,
     QueryPlan,
     QueryScopeDetection,
 )
-from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService
-from app.services.knowledge_base.structure_reader import KnowledgeBaseStructureReader
+from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +93,4 @@ class KnowledgeBaseQueryPipeline:
             result.fallback_used,
         )
         return result
+

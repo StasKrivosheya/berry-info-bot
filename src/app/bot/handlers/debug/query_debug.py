@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 
@@ -6,7 +6,7 @@ from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
-from app.bot.handlers.vector_search_debug import (
+from app.bot.handlers.debug.vector_search_debug import (
     VS_COMMAND_NAME,
     VS_ERROR_TEXT,
     VS_USAGE_TEXT,
@@ -14,15 +14,15 @@ from app.bot.handlers.vector_search_debug import (
     format_search_messages,
     split_for_telegram,
 )
-from app.services.knowledge_base.query_pipeline import KnowledgeBaseQueryPipeline
-from app.services.knowledge_base.query_renderer import render_query_answer
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
+from app.services.knowledge_base.query.renderer import render_query_answer
+from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
+from app.services.knowledge_base.query.types import (
     QueryAnswerResult,
     QueryClassification,
     QueryPlan,
 )
-from app.services.knowledge_base.retrieval import KnowledgeBaseRetrievalService
-from app.services.knowledge_base.structure_reader import KnowledgeBaseStructureReader
+from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
 
 router = Router(name="query-debug")
 logger = logging.getLogger(__name__)
@@ -263,3 +263,4 @@ def _render_debug_message(service_lines: list[str], body: str) -> str:
         + "\n\n--------------------\n\n"
         + normalized_body
     )
+

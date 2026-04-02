@@ -1,11 +1,11 @@
-# ruff: noqa: RUF001
+﻿# ruff: noqa: RUF001
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-from app.services.knowledge_base.query_types import QueryIntent, QueryScopeName
+from app.services.knowledge_base.query.types import QueryIntent, QueryScopeName
 
 INTENT_TIE_BREAK_ORDER: tuple[QueryIntent, ...] = (
     "comparison",

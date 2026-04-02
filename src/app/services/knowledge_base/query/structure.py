@@ -1,15 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import re
 from functools import lru_cache
 from pathlib import Path
 
-from app.services.knowledge_base.manifest_reader import load_manifest_sync_items
+from app.services.knowledge_base.manifest.reader import load_manifest_sync_items
 from app.services.knowledge_base.normalizer import normalize_cell_text
-from app.services.knowledge_base.query_rules import SCOPE_RULES
-from app.services.knowledge_base.query_text import token_overlap_score, tokenize_text
-from app.services.knowledge_base.query_types import (
+from app.services.knowledge_base.query.rules import SCOPE_RULES
+from app.services.knowledge_base.query.text import token_overlap_score, tokenize_text
+from app.services.knowledge_base.query.types import (
     QueryScopeName,
     SearchHitDebugContext,
     StructuredDocument,
@@ -251,3 +251,4 @@ def _match_section(
         if section.body:
             return section
     return sections[0]
+

@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from collections import defaultdict
 
-from app.services.knowledge_base.query_rules import SCOPE_RULES, SCOPE_TIE_BREAK_ORDER
-from app.services.knowledge_base.query_text import normalize_query_text
-from app.services.knowledge_base.query_types import QueryScopeDetection, QueryScopeName, RuleMatch
+from app.services.knowledge_base.query.rules import SCOPE_RULES, SCOPE_TIE_BREAK_ORDER
+from app.services.knowledge_base.query.text import normalize_query_text
+from app.services.knowledge_base.query.types import QueryScopeDetection, QueryScopeName, RuleMatch
 
 logger = logging.getLogger(__name__)
 
@@ -126,3 +126,4 @@ def _confidence_for_rule(scope: QueryScopeName, rule_id: str) -> float:
         if rule.rule_id == rule_id and rule.scope == scope:
             return rule.confidence
     return 0.0
+
