@@ -17,6 +17,7 @@ from app.services.knowledge_base.query.types import (
     AnswerBlock,
     QueryAnswerResult,
     QueryPlan,
+    QueryRetrievalExecutionTrace,
     SearchHitDebugContext,
     StructuredDocument,
     StructuredSection,
@@ -54,6 +55,7 @@ def execute_query_plan(
     *,
     structure_reader: KnowledgeBaseStructureReader,
     search_response: SearchResponse | None = None,
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult:
     documents = (
         structure_reader.documents_for_scopes(plan.scope_detection.scopes)
@@ -80,14 +82,20 @@ def execute_query_plan(
     if plan.strategy == "enumeration_catalog":
         result = _build_enumeration_result(plan, documents)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "overview_summary":
         result = _build_overview_result(plan, documents)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "comparison_summary":
         result = _build_comparison_result(plan, query, documents, search_response)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "detail_retrieval":
         detail_attempted = True
@@ -99,9 +107,11 @@ def execute_query_plan(
             structure_reader=structure_reader,
         )
         if detail_result is not None:
+            if detail_result.retrieval_trace is None:
+                detail_result = _with_retrieval_trace(detail_result, retrieval_trace)
             return detail_result
 
-    return _build_safe_fallback_result(
+    result = _build_safe_fallback_result(
         plan,
         query,
         documents,
@@ -110,6 +120,9 @@ def execute_query_plan(
         detail_result=detail_result,
         detail_attempted=detail_attempted,
     )
+    if result.retrieval_trace is None:
+        result = _with_retrieval_trace(result, retrieval_trace)
+    return result
 
 
 def _build_enumeration_result(
@@ -262,6 +275,8 @@ def _build_detail_result(
 
     query_text = normalize_query_text(query)
     query_tokens = tokenize_text(query)
+    retrieval_tokens = _retrieval_ranking_tokens(plan)
+    ranking_tokens = tuple(dict.fromkeys((*query_tokens, *retrieval_tokens)))
     support = _document_support(search_response)
     documents_by_id = {document.logical_id: document for document in documents}
     _log_structure_mapping(search_response, documents_by_id, structure_reader)
@@ -271,7 +286,7 @@ def _build_detail_result(
         for section in document.sections:
             score = _score_section(
                 query_text=query_text,
-                query_tokens=query_tokens,
+                query_tokens=ranking_tokens,
                 section=section,
                 support_score=support.get(document.logical_id, 0.0),
             )
@@ -299,7 +314,7 @@ def _build_detail_result(
         block_key = (document.logical_id, section.heading_path)
         if block_key in seen_blocks:
             continue
-        block = _detail_block(document, section, query_tokens)
+        block = _detail_block(document, section, ranking_tokens)
         if block is None:
             continue
         seen_blocks.add(block_key)
@@ -525,6 +540,8 @@ def _build_raw_hit_fallback_result(
         return None
 
     query_tokens = tokenize_text(query)
+    retrieval_tokens = _retrieval_ranking_tokens(plan)
+    ranking_tokens = tuple(dict.fromkeys((*query_tokens, *retrieval_tokens)))
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
     seen_blocks: set[tuple[str, str]] = set()
@@ -537,7 +554,7 @@ def _build_raw_hit_fallback_result(
         if block_key in seen_blocks:
             continue
 
-        lines = _rank_hit_lines(hit.text, query_tokens)
+        lines = _rank_hit_lines(hit.text, ranking_tokens)
         if lines:
             block = AnswerBlock(title=title, lines=tuple(lines))
         else:
@@ -717,3 +734,29 @@ def _raw_hit_title(hit: SearchHit, hit_context: SearchHitDebugContext | None) ->
 def _search_hit_logical_id(hit: SearchHit) -> str:
     logical_id = str(hit.attributes.get("logical_id", "")).strip()
     return logical_id or Path(hit.filename).stem
+
+
+def _retrieval_ranking_tokens(plan: QueryPlan) -> tuple[str, ...]:
+    token_source = "\n".join(
+        (
+            plan.retrieval_plan.primary_query,
+            "\n".join(plan.retrieval_plan.alternate_queries),
+            "\n".join(plan.retrieval_plan.keywords),
+        )
+    )
+    return tokenize_text(token_source)
+
+
+def _with_retrieval_trace(
+    result: QueryAnswerResult,
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+) -> QueryAnswerResult:
+    return QueryAnswerResult(
+        plan=result.plan,
+        blocks=result.blocks,
+        summary=result.summary,
+        sources=result.sources,
+        search_response=result.search_response,
+        fallback_used=result.fallback_used,
+        retrieval_trace=retrieval_trace,
+    )

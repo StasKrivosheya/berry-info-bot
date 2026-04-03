@@ -227,6 +227,53 @@ Environment variables used by sync/search:
 - `OPENAI_KB_SEARCH_MAX_RESULTS`: optional override (strict default is `3`).
 - `OPENAI_KB_SCORE_THRESHOLD`: optional override (strict default is `0.7`).
 
+### Query interpretation policy and optional LLM fallback
+
+The query pipeline stays rules-first. Deterministic classifier/scope/planner run first, and the
+LLM is only an optional structured fallback for interpretation when policy allows it.
+
+Environment variables:
+
+- `KB_QUERY_LLM_MODE=disabled|fallback|forced`
+- `KB_QUERY_LLM_ALLOWED_FOR=classifier,scope,planner,retrieval`
+- `KB_QUERY_RULES_MIN_CONFIDENCE=0.85`
+- `KB_QUERY_ENABLE_STAGE_RULES=true|false`
+- `KB_QUERY_ENABLE_STAGE_SCOPE=true|false`
+- `KB_QUERY_ENABLE_STAGE_PLANNER=true|false`
+- `KB_QUERY_ENABLE_STAGE_RETRIEVAL=true|false`
+- `KB_QUERY_ENABLE_STAGE_RENDERER=true|false`
+- `KB_QUERY_LLM_MODEL=`: no hardcoded default; set this only when enabling LLM mode
+- `KB_QUERY_LLM_TIMEOUT_SECONDS=10`
+- `KB_QUERY_LLM_CACHE_SIZE=128`
+- `KB_QUERY_LLM_MAX_RETRIEVAL_VARIANTS=1`
+
+Recommended lightweight fallback model: `gpt-5.4-nano`.
+The interpreter uses the Responses API with structured parsing and `reasoning={"effort":"none"}`.
+The code does not force a specific model; it uses whatever `KB_QUERY_LLM_MODEL` is set to.
+The same structured interpretation call can now also return retrieval hints:
+primary retrieval query, optional alternate queries, and retrieval keywords.
+
+Execution modes:
+
+- `disabled`: current deterministic behavior only, no LLM calls.
+- `fallback`: rules stay primary; LLM is used only for uncertain or disabled interpretation stages.
+- `forced`: always use the LLM for the allowed interpretation stages so you can compare quality.
+
+Behavior examples:
+
+- Clear broad query in `disabled` or `fallback`:
+  `Які є види організованих програм?` stays deterministic and skips the LLM.
+- Ambiguous query in `fallback`:
+  `Порадь щось для відпочинку` can trigger structured LLM interpretation and retrieval planning,
+  then continues through the same app-controlled renderer/retrieval pipeline.
+- Same ambiguous query by mode:
+  `disabled` keeps deterministic safe fallback, `fallback` may call LLM only if needed, `forced`
+  always routes interpretation through the LLM layer.
+- Zoo/animal wording:
+  `хто у вас є в зоопарку?` can be deterministically expanded toward Berry Land KB phrases such as
+  `екскурсія на поні-ферму`, `тварини`, and `ранчо`, with LLM retrieval hints available as a
+  second-layer refinement.
+
 ### Smoke test command
 
 ```powershell
@@ -251,6 +298,46 @@ It returns one message per found result. Each message has:
 
 If no relevant result is found, it returns a service block with fallback status and the fallback text.
 This command is intended for development/testing convenience.
+
+`/vs` remains raw vector-search debug only. It does not use the LLM policy layer.
+
+Additional temporary query-policy debug commands:
+
+```text
+/qclass your question
+/qplan your question
+/qroute your question
+/qretrieve your question
+/qanswer your question
+```
+
+What they show:
+
+- `/qclass`: final classification and its source (`rules`, `llm`, or `default`).
+- `/qplan`: final intent/scope/strategy plus retrieval plan, policy trace, and stage toggles.
+- `/qroute`: policy-only trace, useful for manually checking when LLM fallback was requested.
+- `/qretrieve`: retrieval plan plus executed queries, stop reason, and merged-hit counts.
+- `/qanswer`: rendered answer plus the same routing metadata.
+
+Manual evaluation flow:
+
+1. Keep `KB_QUERY_LLM_MODE=disabled` and run `/qplan` for a few clear queries.
+2. Switch to `KB_QUERY_LLM_MODE=fallback`, set `KB_QUERY_LLM_MODEL`, then compare `/qroute`,
+   `/qretrieve`, and `/qanswer` for ambiguous queries.
+3. Switch to `KB_QUERY_LLM_MODE=forced` to compare the LLM interpretation path against the
+   deterministic path.
+4. Tune the checked-in prompt guide at
+   `src/app/services/knowledge_base/query/llm_prompt_guide.md` against the eval cases in
+   `src/app/services/knowledge_base/query/llm_eval_cases.md`.
+5. To mine fresh KB-native phrases from processed markdown, run:
+
+```text
+python scripts/export_kb_query_prompt_candidates.py
+```
+
+If the selected model is unavailable or at capacity, the app does not crash. The pipeline falls
+back safely to deterministic behavior and the reason appears in debug output as
+`llm_failure_reason=...`, especially via `/qroute`, `/qplan`, `/qretrieve`, or `/qanswer`.
 
 ## Security note
 

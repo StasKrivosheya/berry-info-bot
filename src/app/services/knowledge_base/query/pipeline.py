@@ -1,11 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 
-from app.services.knowledge_base.query.classifier import classify_query_intent
 from app.services.knowledge_base.query.execution import execute_query_plan
-from app.services.knowledge_base.query.planner import build_query_plan
-from app.services.knowledge_base.query.scope import detect_query_scope
+from app.services.knowledge_base.query.policy import KnowledgeBaseQueryPolicy
+from app.services.knowledge_base.query.retrieval_execution import execute_retrieval_plan
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
 from app.services.knowledge_base.query.text import normalize_query_text
 from app.services.knowledge_base.query.types import (
@@ -30,20 +29,25 @@ class KnowledgeBaseQueryPipeline:
         *,
         retriever: KnowledgeBaseRetrievalService | None = None,
         structure_reader: KnowledgeBaseStructureReader | None = None,
+        query_policy: KnowledgeBaseQueryPolicy | None = None,
+        policy_settings=None,
+        llm_interpreter=None,
     ) -> None:
-        self._retriever = retriever or KnowledgeBaseRetrievalService()
+        self._retriever = retriever
         self._structure_reader = structure_reader or KnowledgeBaseStructureReader()
+        self._query_policy = query_policy or KnowledgeBaseQueryPolicy(
+            settings=policy_settings,
+            llm_interpreter=llm_interpreter,
+        )
 
     def classify_query(self, query: str) -> QueryClassification:
-        return classify_query_intent(query)
+        return self.plan_query(query).classification
 
     def detect_scope(self, query: str) -> QueryScopeDetection:
-        return detect_query_scope(query)
+        return self.plan_query(query).scope_detection
 
     def plan_query(self, query: str) -> QueryPlan:
-        classification = self.classify_query(query)
-        scope_detection = self.detect_scope(query)
-        return build_query_plan(classification, scope_detection)
+        return self._query_policy.resolve_query_plan(query)
 
     def answer_query(
         self,
@@ -58,31 +62,63 @@ class KnowledgeBaseQueryPipeline:
     ) -> QueryAnswerResult:
         plan = self.plan_query(query)
         logger.debug(
-            "%s query=%r normalized_query=%r intent=%s scope=%s strategy=%s",
+            (
+                "%s query=%r normalized_query=%r intent=%s scope=%s strategy=%s "
+                "mode=%s llm_used=%s"
+            ),
             LOG_EVENT_PIPELINE_START,
             query,
             normalize_query_text(query),
             plan.intent,
             plan.scope_detection.primary_scope,
             plan.strategy,
+            plan.policy_trace.mode,
+            plan.policy_trace.llm_used,
         )
+        stage_toggles = plan.policy_trace.stage_toggles
         search_response = None
-        if plan.needs_retrieval:
-            search_response = self._retriever.search(
-                query=query,
+        retrieval_trace = None
+        if stage_toggles.retrieval_enabled and plan.needs_retrieval:
+            search_response, retrieval_trace = execute_retrieval_plan(
+                self._get_retriever(),
+                plan.retrieval_plan,
                 max_num_results=max_num_results,
                 rewrite_query=rewrite_query,
                 score_threshold=score_threshold,
                 category=category,
                 logical_id=logical_id,
                 attribute_filters=attribute_filters,
+                max_alternate_queries=self._query_policy.settings.kb_query_llm_max_retrieval_variants,
             )
+        elif plan.needs_retrieval:
+            retrieval_trace = plan_retrieval_disabled_trace(plan)
+
+        if not stage_toggles.renderer_enabled:
+            result = QueryAnswerResult(
+                plan=plan,
+                summary="Renderer stage is disabled by configuration.",
+                blocks=(),
+                sources=(),
+                search_response=search_response,
+                fallback_used=True,
+                retrieval_trace=retrieval_trace,
+            )
+            logger.info(
+                "%s intent=%s scope=%s strategy=%s fallback_used=%s",
+                LOG_EVENT_PIPELINE_RUN,
+                result.plan.intent,
+                result.plan.scope_detection.primary_scope,
+                result.plan.strategy,
+                result.fallback_used,
+            )
+            return result
 
         result = execute_query_plan(
             query,
             plan,
             structure_reader=self._structure_reader,
             search_response=search_response,
+            retrieval_trace=retrieval_trace,
         )
         logger.info(
             "%s intent=%s scope=%s strategy=%s fallback_used=%s",
@@ -94,3 +130,19 @@ class KnowledgeBaseQueryPipeline:
         )
         return result
 
+    def _get_retriever(self) -> KnowledgeBaseRetrievalService:
+        if self._retriever is None:
+            self._retriever = KnowledgeBaseRetrievalService()
+        return self._retriever
+
+
+def plan_retrieval_disabled_trace(plan: QueryPlan):
+    from app.services.knowledge_base.query.types import QueryRetrievalExecutionTrace
+
+    return QueryRetrievalExecutionTrace(
+        planned_queries=plan.retrieval_plan.planned_queries,
+        executed_queries=(),
+        merged_raw_hit_count=0,
+        merged_result_count=0,
+        stop_reason="retrieval_disabled_by_configuration",
+    )
