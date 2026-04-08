@@ -153,11 +153,19 @@ class SuccessfulPipeline:
             search_response=None,
             fallback_used=False,
             retrieval_trace=QueryRetrievalExecutionTrace(
+                initial_planned_queries=("РѕСЂРіР°РЅС–Р·РѕРІР°РЅС– РїСЂРѕРіСЂР°РјРё",),
+                initial_executed_queries=(),
+                initial_result_count=0,
+                initial_top_score=None,
+                initial_stop_reason="no_alternate_queries_planned",
+                retry_executed=False,
                 planned_queries=("організовані програми",),
                 executed_queries=(),
                 merged_raw_hit_count=0,
                 merged_result_count=0,
                 stop_reason="no_alternate_queries_planned",
+                renderer_trusted_top_hit=True,
+                renderer_note="structure_only_overview",
             ),
         )
 
@@ -341,6 +349,8 @@ def test_qroute_handler_renders_policy_trace(monkeypatch) -> None:
     rendered = "".join(str(call["text"]) for call in bot.calls)
     assert "mode=fallback" in rendered
     assert "llm_used=False" in rendered
+    assert "llm_escalation_triggered=False" in rendered
+    assert "retry_executed=False" in rendered
     assert "deterministic_strategy=enumeration_catalog" in rendered
     assert "deterministic_retrieval_primary=організовані програми" in rendered
     assert "final_retrieval_source=rules" in rendered

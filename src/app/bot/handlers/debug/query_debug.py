@@ -138,7 +138,7 @@ async def query_route_handler(message: Message, command: CommandObject) -> None:
         usage_text=QROUTE_USAGE_TEXT,
         render_fn=lambda query: _render_policy_debug(
             query,
-            _create_query_pipeline().plan_query(query),
+            _create_query_pipeline().answer_query(query, rewrite_query=False),
         ),
     )
 
@@ -284,7 +284,9 @@ def _render_plan_debug(query: str, plan: QueryPlan) -> str:
     return _render_debug_message(service_lines, "\n".join(line for line in body_lines if line))
 
 
-def _render_policy_debug(query: str, plan: QueryPlan) -> str:
+def _render_policy_debug(query: str, result: QueryAnswerResult) -> str:
+    plan = result.plan
+    trace = result.retrieval_trace
     service_lines = [
         "Service:",
         f"query={query}",
@@ -292,8 +294,11 @@ def _render_policy_debug(query: str, plan: QueryPlan) -> str:
         f"llm_requested={plan.policy_trace.llm_requested}",
         f"llm_used={plan.policy_trace.llm_used}",
         f"llm_cache_hit={plan.policy_trace.llm_cache_hit}",
+        f"llm_escalation_triggered={trace.llm_escalation_triggered if trace else False}",
+        f"retry_executed={trace.retry_executed if trace else False}",
     ]
-    return _render_debug_message(service_lines, _render_policy_body(plan))
+    body_parts = [_render_policy_body(plan), _render_retrieval_trace_body(result)]
+    return _render_debug_message(service_lines, "\n\n".join(part for part in body_parts if part))
 
 
 def _render_answer_debug(query: str, result: QueryAnswerResult) -> str:
@@ -332,6 +337,10 @@ def _render_retrieval_debug(query: str, result: QueryAnswerResult) -> str:
             f"{len(result.retrieval_trace.executed_queries) if result.retrieval_trace else 0}"
         ),
         f"merged_result_count={merged_result_count}",
+        (
+            "retry_executed="
+            f"{result.retrieval_trace.retry_executed if result.retrieval_trace else False}"
+        ),
     ]
     return _render_debug_message(service_lines, _render_retrieval_body(result))
 
@@ -420,22 +429,47 @@ def _render_retrieval_trace_body(result: QueryAnswerResult) -> str:
     trace = result.retrieval_trace
     if trace is None:
         return ""
-    planned_queries = ", ".join(trace.planned_queries) or "(none)"
-    executed_queries = ", ".join(trace.executed_queries) or "(none)"
+    initial_top_score = (
+        str(trace.initial_top_score) if trace.initial_top_score is not None else "(none)"
+    )
+    retry_top_score = str(trace.retry_top_score) if trace.retry_top_score is not None else "(none)"
+    renderer_trusted_top_hit = (
+        str(trace.renderer_trusted_top_hit)
+        if trace.renderer_trusted_top_hit is not None
+        else "(none)"
+    )
     top_score = (
         str(result.search_response.top_score)
         if result.search_response is not None and result.search_response.top_score is not None
         else "(none)"
     )
+    initial_planned_queries = ", ".join(trace.initial_planned_queries) or "(none)"
+    initial_executed_queries = ", ".join(trace.initial_executed_queries) or "(none)"
+    planned_queries = ", ".join(trace.planned_queries) or "(none)"
+    executed_queries = ", ".join(trace.executed_queries) or "(none)"
     return "\n".join(
         (
             "Retrieval execution:",
+            f"- initial_planned_queries={initial_planned_queries}",
+            f"- initial_executed_queries={initial_executed_queries}",
+            f"- initial_result_count={trace.initial_result_count}",
+            f"- initial_top_score={initial_top_score}",
+            f"- initial_stop_reason={trace.initial_stop_reason or '(none)'}",
+            f"- llm_escalation_triggered={trace.llm_escalation_triggered}",
+            f"- llm_escalation_reason={trace.llm_escalation_reason or '(none)'}",
+            f"- retry_executed={trace.retry_executed}",
+            f"- final_planned_queries={planned_queries}",
+            f"- final_executed_queries={executed_queries}",
             f"- planned_queries={planned_queries}",
             f"- executed_queries={executed_queries}",
+            f"- retry_result_count={trace.retry_result_count}",
+            f"- retry_top_score={retry_top_score}",
             f"- merged_raw_hit_count={trace.merged_raw_hit_count}",
             f"- merged_result_count={trace.merged_result_count}",
             f"- top_score={top_score}",
             f"- stop_reason={trace.stop_reason or '(none)'}",
+            f"- renderer_trusted_top_hit={renderer_trusted_top_hit}",
+            f"- renderer_note={trace.renderer_note or '(none)'}",
         )
     )
 

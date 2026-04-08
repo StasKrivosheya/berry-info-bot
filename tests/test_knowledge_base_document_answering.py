@@ -144,6 +144,149 @@ def _write_manifest(tmp_path: Path) -> Path:
     return manifest_path
 
 
+def _write_schedule_manifest(tmp_path: Path) -> Path:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+
+    (markdown_dir / "schedule.md").write_text(
+        (
+            "# Св (Квітень Травень)\n\n"
+            "Сімейний відпочинок у Berry Land.\n\n"
+            "📅 Графік роботи:\n"
+            "• Парк працює по суботах та неділях\n"
+            "• Час роботи: з 10:00 до 19:00\n\n"
+            "## Що входить у вартість квитка?\n\n"
+            "• Вхід на територію\n"
+            "• Ігрова зона\n\n"
+            "## Додаткові послуги на території парку\n\n"
+            "• Альтанки з мангалом\n"
+            "• Кафе та бар\n"
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "kb.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Schedule",
+                        "sheet_index": 1,
+                        "workbook_file": "kb.xlsx",
+                        "output_md_file": ["markdown/schedule.md"],
+                        "logical_id": "schedule",
+                        "category": "park",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-08T00:00:00+00:00",
+                        "content_hash_sha256": "hash-schedule",
+                    }
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _write_animals_manifest(tmp_path: Path) -> Path:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+
+    (markdown_dir / "animals.md").write_text(
+        (
+            "# Парк пригод\n\n"
+            "## Випускний Level 4.0\n\n"
+            "• Вхід на територію\n"
+            "• Водні розваги\n"
+            "• Екскурсія на поні-ферму\n\n"
+            "## Екскурсія на ферму\n\n"
+            "• Знайомство з поні, козликами, альпакою та догляд за тваринами.\n"
+            "• Мешканці ранчо чекають на гостей.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "kb.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Animals",
+                        "sheet_index": 1,
+                        "workbook_file": "kb.xlsx",
+                        "output_md_file": ["markdown/animals.md"],
+                        "logical_id": "animals",
+                        "category": "park",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-08T00:00:00+00:00",
+                        "content_hash_sha256": "hash-animals",
+                    }
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _write_services_manifest(tmp_path: Path) -> Path:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+
+    (markdown_dir / "services.md").write_text(
+        (
+            "# Додаткові послуги\n\n"
+            "## Активності на воді\n\n"
+            "• Катання на катамаранах — 150 грн\n"
+            "• Катання на байдарках — 100 грн\n\n"
+            "## Оренда та послуги\n\n"
+            "• Велика альтанка — 2500 грн\n"
+            "• Трансфер — 4000 грн\n"
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "kb.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "Services",
+                        "sheet_index": 1,
+                        "workbook_file": "kb.xlsx",
+                        "output_md_file": ["markdown/services.md"],
+                        "logical_id": "services",
+                        "category": "services",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-08T00:00:00+00:00",
+                        "content_hash_sha256": "hash-services",
+                    }
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
 def _search_response(*, logical_id: str, text: str) -> SearchResponse:
     return SearchResponse(
         results=[
@@ -322,10 +465,110 @@ def test_pipeline_ambiguous_zoo_query_uses_deterministic_retrieval_rewrite(tmp_p
     ]
     assert result.plan.retrieval_plan.primary_query == "екскурсія на поні-ферму тварини ранчо"
     assert result.retrieval_trace is not None
-    assert result.retrieval_trace.stop_reason == "primary_top_score_sufficient"
+    assert result.retrieval_trace.stop_reason == "no_alternate_queries_planned"
     rendered = render_query_answer(result)
     assert "найближчі розділи" in rendered.casefold()
     assert "- Поні-ферма" in rendered
+
+
+def test_pipeline_fallback_mode_keeps_strong_schedule_hit_without_llm_retry(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_schedule_manifest(tmp_path)
+    retriever = FakeRetriever(
+        _search_response_with_score(
+            logical_id="schedule",
+            text=(
+                "# Св (Квітень Травень)\n\n"
+                "📅 Графік роботи:\n"
+                "• Парк працює по суботах та неділях\n"
+                "• Час роботи: з 10:00 до 19:00\n"
+            ),
+            score=0.92,
+        )
+    )
+    interpreter = FakeLLMInterpreter(
+        QueryInterpretationResult(
+            intent="detail",
+            scope="park_activities",
+            strategy="detail_retrieval",
+            confidence=0.94,
+            retrieval_hints=QueryRetrievalHints(
+                primary_query="графік роботи Berry Land",
+                alternate_queries=(),
+                keywords=("графік роботи", "час роботи"),
+                confidence=0.9,
+            ),
+        )
+    )
+    settings = KnowledgeBaseQuerySettings(
+        _env_file=None,
+        kb_query_llm_mode="fallback",
+        kb_query_llm_allowed_for=("classifier", "scope", "planner", "retrieval"),
+        kb_query_rules_min_confidence=0.85,
+        kb_query_enable_stage_rules=True,
+        kb_query_enable_stage_scope=True,
+        kb_query_enable_stage_planner=True,
+        kb_query_enable_stage_retrieval=True,
+        kb_query_enable_stage_renderer=True,
+        kb_query_llm_model=None,
+        kb_query_llm_timeout_seconds=10,
+        kb_query_llm_cache_size=32,
+        kb_query_llm_max_retrieval_variants=1,
+        openai_api_key=None,
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=settings,
+        llm_interpreter=interpreter,
+    )
+
+    result = pipeline.answer_query("Коли відкривається парк?")
+
+    assert len(interpreter.calls) == 0
+    assert len(retriever.calls) == 1
+    assert retriever.calls[0]["query"] == "Коли відкривається парк?"
+    assert result.retrieval_trace is not None
+    assert result.retrieval_trace.llm_escalation_triggered is False
+    assert result.retrieval_trace.retry_executed is False
+    assert result.retrieval_trace.renderer_trusted_top_hit is True
+    assert result.blocks[0].title == "Св (Квітень Травень)"
+    assert result.blocks[0].lines[0] == "Час роботи: з 10:00 до 19:00"
+    rendered = render_query_answer(result)
+    assert "Додаткові послуги на території парку" not in rendered.split("\n\n")[1]
+
+
+def test_pipeline_animal_query_prefers_animal_lines_over_generic_program_content(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_animals_manifest(tmp_path)
+    retriever = FakeRetriever(
+        _search_response_with_score(
+            logical_id="animals",
+            text=(
+                "# Парк пригод\n\n"
+                "## Випускний Level 4.0\n\n"
+                "• Вхід на територію\n"
+                "• Водні розваги\n"
+                "• Екскурсія на поні-ферму\n"
+            ),
+            score=0.83,
+        )
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    result = pipeline.answer_query("Які є у вас тваринки?")
+
+    assert result.blocks
+    rendered = render_query_answer(result)
+    assert "козликами" in rendered
+    assert "альпакою" in rendered
+    assert "Водні розваги" not in rendered
 
 
 def test_pipeline_safe_fallback_uses_search_fallback_when_structure_missing(tmp_path: Path) -> None:
@@ -374,23 +617,38 @@ def test_pipeline_detail_falls_back_to_raw_hits_when_structure_missing(tmp_path:
     assert "Sources:\n- park" in rendered
 
 
-def test_pipeline_ambiguous_query_uses_llm_fallback_and_keeps_renderer_control(
+def test_pipeline_fallback_mode_escalates_once_for_weak_detail_result(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_manifest(tmp_path)
-    retriever = FakeRetriever(_search_response(logical_id="park", text="Поні-ферма"))
+    retriever = MappingRetriever(
+        {
+            "де можна побачити звірят?": SearchResponse(
+                results=[],
+                top_score=None,
+                used_threshold=0.7,
+                fallback_triggered=False,
+                fallback_message=None,
+            ),
+            "екскурсія на поні-ферму тварини ранчо": _search_response_with_score(
+                logical_id="park",
+                text="Поні-ферма\nЗнайомство з тваринами на ранчо.",
+                score=0.91,
+            ),
+        }
+    )
     interpreter = FakeLLMInterpreter(
         QueryInterpretationResult(
-            intent="overview",
+            intent="detail",
             scope="park_activities",
-            strategy="overview_summary",
+            strategy="detail_retrieval",
             confidence=0.9,
-            debug_note="Broad park offer query.",
+            debug_note="Raw wording is weak; retry with Berry Land farm wording.",
             retrieval_hints=QueryRetrievalHints(
-                primary_query="активності в парку Berry Land",
-                alternate_queries=("поні-ферма активності",),
-                keywords=("активності", "поні-ферма"),
-                confidence=0.82,
+                primary_query="екскурсія на поні-ферму тварини ранчо",
+                alternate_queries=("ферма до тваринок Berry Land",),
+                keywords=("поні-ферма", "тварини"),
+                confidence=0.87,
             ),
         )
     )
@@ -417,17 +675,145 @@ def test_pipeline_ambiguous_query_uses_llm_fallback_and_keeps_renderer_control(
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("Порадь щось для відпочинку")
+    result = pipeline.answer_query("де можна побачити звірят?")
 
     assert len(interpreter.calls) == 1
-    assert retriever.calls == []
-    assert result.plan.intent == "overview"
-    assert result.plan.classification.source == "llm"
+    assert [call["query"] for call in retriever.calls] == [
+        "де можна побачити звірят?",
+        "екскурсія на поні-ферму тварини ранчо",
+    ]
+    assert result.plan.intent == "detail"
     assert result.plan.scope_detection.primary_scope == "park_activities"
-    assert result.plan.strategy == "overview_summary"
+    assert result.plan.retrieval_plan.primary_query == "екскурсія на поні-ферму тварини ранчо"
+    assert result.retrieval_trace is not None
+    assert result.retrieval_trace.llm_escalation_triggered is True
+    assert result.retrieval_trace.llm_escalation_reason == "no_search_hits"
+    assert result.retrieval_trace.retry_executed is True
+    assert result.retrieval_trace.initial_executed_queries == ("де можна побачити звірят?",)
+    assert result.retrieval_trace.executed_queries == ("екскурсія на поні-ферму тварини ранчо",)
     rendered = render_query_answer(result)
-    assert "У парку можна" in rendered
     assert "- Поні-ферма" in rendered
+
+
+def test_pipeline_returns_no_relevant_info_for_unsupported_pricing_topic(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_services_manifest(tmp_path)
+    retriever = FakeRetriever(
+        SearchResponse(
+            results=[
+                SearchHit(
+                    file_id="file_services",
+                    filename="services.md",
+                    score=0.78,
+                    attributes={"logical_id": "services", "category": "services"},
+                    text=(
+                        "### Активності на воді\n"
+                        "• Катання на катамаранах — 150 грн\n"
+                        "• Катання на байдарках — 100 грн\n"
+                    ),
+                ),
+                SearchHit(
+                    file_id="file_services_2",
+                    filename="services.md",
+                    score=0.74,
+                    attributes={"logical_id": "services", "category": "services"},
+                    text=(
+                        "### Оренда та послуги\n"
+                        "• Велика альтанка — 2500 грн\n"
+                        "• Трансфер — 4000 грн\n"
+                    ),
+                ),
+            ],
+            top_score=0.78,
+            used_threshold=0.7,
+            fallback_triggered=False,
+            fallback_message=None,
+        )
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    result = pipeline.answer_query("Скільки коштує катання на ковзанах?")
+
+    assert result.summary == NO_RELEVANT_INFO_FALLBACK
+    assert result.blocks == ()
+    assert result.retrieval_trace is not None
+    assert result.retrieval_trace.renderer_trusted_top_hit is False
+    assert result.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
+
+
+def test_pipeline_forced_mode_still_rejects_unsupported_pricing_topic(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_services_manifest(tmp_path)
+    retriever = FakeRetriever(
+        SearchResponse(
+            results=[
+                SearchHit(
+                    file_id="file_services",
+                    filename="services.md",
+                    score=0.82,
+                    attributes={"logical_id": "services", "category": "services"},
+                    text=(
+                        "### Активності на воді\n"
+                        "• Катання на катамаранах — 150 грн\n"
+                        "• Катання на байдарках — 100 грн\n"
+                    ),
+                )
+            ],
+            top_score=0.82,
+            used_threshold=0.7,
+            fallback_triggered=False,
+            fallback_message=None,
+        )
+    )
+    interpreter = FakeLLMInterpreter(
+        QueryInterpretationResult(
+            intent="detail",
+            scope="pricing",
+            strategy="detail_retrieval",
+            confidence=0.93,
+            retrieval_hints=QueryRetrievalHints(
+                primary_query="катання на ковзанах вартість",
+                alternate_queries=("ковзани ціна",),
+                keywords=("ковзани", "вартість", "ціна"),
+                confidence=0.89,
+            ),
+        )
+    )
+    settings = KnowledgeBaseQuerySettings(
+        _env_file=None,
+        kb_query_llm_mode="forced",
+        kb_query_llm_allowed_for=("classifier", "scope", "planner", "retrieval"),
+        kb_query_rules_min_confidence=0.85,
+        kb_query_enable_stage_rules=True,
+        kb_query_enable_stage_scope=True,
+        kb_query_enable_stage_planner=True,
+        kb_query_enable_stage_retrieval=True,
+        kb_query_enable_stage_renderer=True,
+        kb_query_llm_model=None,
+        kb_query_llm_timeout_seconds=10,
+        kb_query_llm_cache_size=32,
+        kb_query_llm_max_retrieval_variants=0,
+        openai_api_key=None,
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=settings,
+        llm_interpreter=interpreter,
+    )
+
+    result = pipeline.answer_query("Скільки коштує катання на ковзанах?")
+
+    assert result.summary == NO_RELEVANT_INFO_FALLBACK
+    assert result.blocks == ()
+    assert result.retrieval_trace is not None
+    assert result.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
 
 
 def test_pipeline_llm_retrieval_plan_tries_alternate_when_primary_is_weak(

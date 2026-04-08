@@ -153,11 +153,23 @@ class QueryAnswerResult:
 
 @dataclass(frozen=True, slots=True)
 class QueryRetrievalExecutionTrace:
+    initial_planned_queries: tuple[str, ...] = ()
+    initial_executed_queries: tuple[str, ...] = ()
+    initial_result_count: int = 0
+    initial_top_score: float | None = None
+    initial_stop_reason: str | None = None
+    llm_escalation_triggered: bool = False
+    llm_escalation_reason: str | None = None
+    retry_executed: bool = False
     planned_queries: tuple[str, ...] = ()
     executed_queries: tuple[str, ...] = ()
+    retry_result_count: int = 0
+    retry_top_score: float | None = None
     merged_raw_hit_count: int = 0
     merged_result_count: int = 0
     stop_reason: str | None = None
+    renderer_trusted_top_hit: bool | None = None
+    renderer_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

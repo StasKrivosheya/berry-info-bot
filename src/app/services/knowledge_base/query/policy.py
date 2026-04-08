@@ -31,6 +31,7 @@ from app.services.knowledge_base.query.types import (
     QueryClassification,
     QueryDecisionSource,
     QueryInterpretationStage,
+    QueryLLMMode,
     QueryPlan,
     QueryPolicyTrace,
     QueryRetrievalPlan,
@@ -63,9 +64,15 @@ class KnowledgeBaseQueryPolicy:
     def settings(self) -> KnowledgeBaseQuerySettings:
         return self._settings
 
-    def resolve_query_plan(self, query: str) -> QueryPlan:
+    def resolve_query_plan(
+        self,
+        query: str,
+        *,
+        llm_mode_override: QueryLLMMode | None = None,
+    ) -> QueryPlan:
         normalized_query = normalize_query_text(query)
         stage_toggles = self._settings.stage_toggles
+        llm_mode = llm_mode_override or self._settings.kb_query_llm_mode
 
         deterministic_classification = (
             classify_query_intent(query)
@@ -90,6 +97,7 @@ class KnowledgeBaseQueryPolicy:
         )
 
         requested_stages, llm_skip_reason = self._determine_llm_stages(
+            mode=llm_mode,
             deterministic_classification=deterministic_classification,
             deterministic_scope=deterministic_scope,
             deterministic_strategy=deterministic_strategy,
@@ -106,7 +114,7 @@ class KnowledgeBaseQueryPolicy:
                 LOG_EVENT_POLICY_LLM_REQUESTED,
                 query,
                 requested_stages,
-                self._settings.kb_query_llm_mode,
+                llm_mode,
             )
             llm_result, llm_cache_hit, llm_failure_reason = self._interpret_with_llm(
                 query=query,
@@ -132,7 +140,7 @@ class KnowledgeBaseQueryPolicy:
                 LOG_EVENT_POLICY_LLM_SKIPPED,
                 query,
                 llm_skip_reason,
-                self._settings.kb_query_llm_mode,
+                llm_mode,
             )
 
         final_classification = deterministic_classification
@@ -215,7 +223,7 @@ class KnowledgeBaseQueryPolicy:
             final_strategy,
         )
         policy_trace = QueryPolicyTrace(
-            mode=self._settings.kb_query_llm_mode,
+            mode=llm_mode,
             llm_allowed_for=self._settings.kb_query_llm_allowed_for,
             stage_toggles=stage_toggles,
             rules_min_confidence=self._settings.kb_query_rules_min_confidence,
@@ -261,7 +269,7 @@ class KnowledgeBaseQueryPolicy:
             ),
             LOG_EVENT_POLICY_RESOLVED,
             query,
-            self._settings.kb_query_llm_mode,
+            llm_mode,
             plan.intent,
             final_intent_source,
             plan.scope_detection.primary_scope,
@@ -279,12 +287,12 @@ class KnowledgeBaseQueryPolicy:
     def _determine_llm_stages(
         self,
         *,
+        mode: QueryLLMMode,
         deterministic_classification: QueryClassification,
         deterministic_scope: QueryScopeDetection,
         deterministic_strategy: QueryStrategy,
         deterministic_retrieval_plan: QueryRetrievalPlan,
     ) -> tuple[tuple[QueryInterpretationStage, ...], str | None]:
-        mode = self._settings.kb_query_llm_mode
         if mode == "disabled":
             return (), "llm_disabled_by_mode"
 

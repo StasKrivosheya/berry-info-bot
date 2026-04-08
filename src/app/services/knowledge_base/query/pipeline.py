@@ -10,7 +10,9 @@ from app.services.knowledge_base.query.text import normalize_query_text
 from app.services.knowledge_base.query.types import (
     QueryAnswerResult,
     QueryClassification,
+    QueryLLMMode,
     QueryPlan,
+    QueryRetrievalExecutionTrace,
     QueryScopeDetection,
 )
 from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 LOG_EVENT_PIPELINE_START = "kb_query_pipeline_start"
 LOG_EVENT_PIPELINE_RUN = "kb_query_pipeline_run"
+FALLBACK_MIN_TRUSTED_TOP_SCORE = 0.7
 
 
 class KnowledgeBaseQueryPipeline:
@@ -41,10 +44,10 @@ class KnowledgeBaseQueryPipeline:
         )
 
     def classify_query(self, query: str) -> QueryClassification:
-        return self.plan_query(query).classification
+        return self._query_policy.resolve_query_plan(query).classification
 
     def detect_scope(self, query: str) -> QueryScopeDetection:
-        return self.plan_query(query).scope_detection
+        return self._query_policy.resolve_query_plan(query).scope_detection
 
     def plan_query(self, query: str) -> QueryPlan:
         return self._query_policy.resolve_query_plan(query)
@@ -60,7 +63,12 @@ class KnowledgeBaseQueryPipeline:
         logical_id: str | None = None,
         attribute_filters=None,
     ) -> QueryAnswerResult:
-        plan = self.plan_query(query)
+        runtime_mode = self._query_policy.settings.kb_query_llm_mode
+        plan = (
+            self._query_policy.resolve_query_plan(query)
+            if runtime_mode == "forced"
+            else self._resolve_initial_plan(query)
+        )
         logger.debug(
             (
                 "%s query=%r normalized_query=%r intent=%s scope=%s strategy=%s "
@@ -72,9 +80,101 @@ class KnowledgeBaseQueryPipeline:
             plan.intent,
             plan.scope_detection.primary_scope,
             plan.strategy,
-            plan.policy_trace.mode,
+            runtime_mode,
             plan.policy_trace.llm_used,
         )
+
+        if runtime_mode == "forced":
+            result = self._run_plan(
+                query,
+                plan,
+                max_num_results=max_num_results,
+                rewrite_query=rewrite_query,
+                score_threshold=score_threshold,
+                category=category,
+                logical_id=logical_id,
+                attribute_filters=attribute_filters,
+                max_alternate_queries=self._query_policy.settings.kb_query_llm_max_retrieval_variants,
+            )
+            self._log_pipeline_result(result)
+            return result
+
+        deterministic_result = self._run_plan(
+            query,
+            plan,
+            max_num_results=max_num_results,
+            rewrite_query=rewrite_query,
+            score_threshold=score_threshold,
+            category=category,
+            logical_id=logical_id,
+            attribute_filters=attribute_filters,
+            max_alternate_queries=0,
+        )
+        escalation_reason = self._determine_escalation_reason(
+            deterministic_result,
+            mode=runtime_mode,
+        )
+        if escalation_reason is None:
+            self._log_pipeline_result(deterministic_result)
+            return deterministic_result
+
+        llm_plan = self._query_policy.resolve_query_plan(
+            query,
+            llm_mode_override=runtime_mode,
+        )
+        final_result = deterministic_result
+        retry_result: QueryAnswerResult | None = None
+        if self._should_retry_retrieval(plan, llm_plan):
+            retry_result = self._run_plan(
+                query,
+                llm_plan,
+                max_num_results=max_num_results,
+                rewrite_query=rewrite_query,
+                score_threshold=score_threshold,
+                category=category,
+                logical_id=logical_id,
+                attribute_filters=attribute_filters,
+                max_alternate_queries=0,
+            )
+            final_result = retry_result
+        elif llm_plan != plan:
+            final_result = self._render_with_existing_search_response(
+                query,
+                llm_plan,
+                deterministic_result,
+            )
+
+        final_result = self._with_escalation_trace(
+            deterministic_result,
+            final_result,
+            escalation_reason=escalation_reason,
+            retry_executed=retry_result is not None,
+        )
+        self._log_pipeline_result(final_result)
+        return final_result
+
+    def _resolve_initial_plan(self, query: str) -> QueryPlan:
+        runtime_mode = self._query_policy.settings.kb_query_llm_mode
+        if runtime_mode == "forced":
+            return self._query_policy.resolve_query_plan(query)
+        return self._query_policy.resolve_query_plan(
+            query,
+            llm_mode_override="disabled",
+        )
+
+    def _run_plan(
+        self,
+        query: str,
+        plan: QueryPlan,
+        *,
+        max_num_results: int | None,
+        rewrite_query: bool,
+        score_threshold: float | None,
+        category: str | None,
+        logical_id: str | None,
+        attribute_filters,
+        max_alternate_queries: int,
+    ) -> QueryAnswerResult:
         stage_toggles = plan.policy_trace.stage_toggles
         search_response = None
         retrieval_trace = None
@@ -88,13 +188,26 @@ class KnowledgeBaseQueryPipeline:
                 category=category,
                 logical_id=logical_id,
                 attribute_filters=attribute_filters,
-                max_alternate_queries=self._query_policy.settings.kb_query_llm_max_retrieval_variants,
+                max_alternate_queries=max_alternate_queries,
+            )
+            retrieval_trace = QueryRetrievalExecutionTrace(
+                initial_planned_queries=retrieval_trace.planned_queries,
+                initial_executed_queries=retrieval_trace.executed_queries,
+                initial_result_count=retrieval_trace.merged_result_count,
+                initial_top_score=search_response.top_score,
+                initial_stop_reason=retrieval_trace.stop_reason,
+                retry_executed=False,
+                planned_queries=retrieval_trace.planned_queries,
+                executed_queries=retrieval_trace.executed_queries,
+                merged_raw_hit_count=retrieval_trace.merged_raw_hit_count,
+                merged_result_count=retrieval_trace.merged_result_count,
+                stop_reason=retrieval_trace.stop_reason,
             )
         elif plan.needs_retrieval:
             retrieval_trace = plan_retrieval_disabled_trace(plan)
 
         if not stage_toggles.renderer_enabled:
-            result = QueryAnswerResult(
+            return QueryAnswerResult(
                 plan=plan,
                 summary="Renderer stage is disabled by configuration.",
                 blocks=(),
@@ -103,23 +216,141 @@ class KnowledgeBaseQueryPipeline:
                 fallback_used=True,
                 retrieval_trace=retrieval_trace,
             )
-            logger.info(
-                "%s intent=%s scope=%s strategy=%s fallback_used=%s",
-                LOG_EVENT_PIPELINE_RUN,
-                result.plan.intent,
-                result.plan.scope_detection.primary_scope,
-                result.plan.strategy,
-                result.fallback_used,
-            )
-            return result
 
-        result = execute_query_plan(
+        return execute_query_plan(
             query,
             plan,
             structure_reader=self._structure_reader,
             search_response=search_response,
             retrieval_trace=retrieval_trace,
         )
+
+    def _render_with_existing_search_response(
+        self,
+        query: str,
+        plan: QueryPlan,
+        base_result: QueryAnswerResult,
+    ) -> QueryAnswerResult:
+        if not plan.policy_trace.stage_toggles.renderer_enabled:
+            return QueryAnswerResult(
+                plan=plan,
+                summary="Renderer stage is disabled by configuration.",
+                blocks=(),
+                sources=(),
+                search_response=base_result.search_response,
+                fallback_used=True,
+                retrieval_trace=base_result.retrieval_trace,
+            )
+        return execute_query_plan(
+            query,
+            plan,
+            structure_reader=self._structure_reader,
+            search_response=base_result.search_response,
+            retrieval_trace=base_result.retrieval_trace,
+        )
+
+    def _determine_escalation_reason(
+        self,
+        result: QueryAnswerResult,
+        *,
+        mode: QueryLLMMode,
+    ) -> str | None:
+        if mode != "fallback":
+            return None
+        if not result.plan.needs_retrieval:
+            return None
+        if not result.plan.policy_trace.stage_toggles.retrieval_enabled:
+            return None
+        if result.search_response is None or not result.search_response.results:
+            return "no_search_hits"
+        if (
+            result.search_response.top_score is not None
+            and result.search_response.top_score < FALLBACK_MIN_TRUSTED_TOP_SCORE
+        ):
+            return "top_score_below_runtime_threshold"
+        trace = result.retrieval_trace
+        if trace is None:
+            return "missing_retrieval_trace"
+        if trace.renderer_trusted_top_hit is False:
+            return trace.renderer_note or "renderer_low_confidence"
+        return None
+
+    def _should_retry_retrieval(
+        self,
+        initial_plan: QueryPlan,
+        llm_plan: QueryPlan,
+    ) -> bool:
+        if not llm_plan.needs_retrieval:
+            return False
+        return llm_plan.retrieval_plan.primary_query != initial_plan.retrieval_plan.primary_query
+
+    def _with_escalation_trace(
+        self,
+        initial_result: QueryAnswerResult,
+        final_result: QueryAnswerResult,
+        *,
+        escalation_reason: str,
+        retry_executed: bool,
+    ) -> QueryAnswerResult:
+        initial_trace = initial_result.retrieval_trace
+        final_trace = final_result.retrieval_trace
+        if initial_trace is None and final_trace is None:
+            return final_result
+
+        combined_trace = QueryRetrievalExecutionTrace(
+            initial_planned_queries=(
+                initial_trace.initial_planned_queries if initial_trace is not None else ()
+            ),
+            initial_executed_queries=(
+                initial_trace.initial_executed_queries if initial_trace is not None else ()
+            ),
+            initial_result_count=(
+                initial_trace.initial_result_count if initial_trace is not None else 0
+            ),
+            initial_top_score=(
+                initial_trace.initial_top_score if initial_trace is not None else None
+            ),
+            initial_stop_reason=(
+                initial_trace.initial_stop_reason if initial_trace is not None else None
+            ),
+            llm_escalation_triggered=True,
+            llm_escalation_reason=escalation_reason,
+            retry_executed=retry_executed,
+            planned_queries=final_trace.planned_queries if final_trace is not None else (),
+            executed_queries=final_trace.executed_queries if final_trace is not None else (),
+            retry_result_count=(
+                final_trace.merged_result_count
+                if retry_executed and final_trace is not None
+                else 0
+            ),
+            retry_top_score=(
+                final_result.search_response.top_score
+                if (
+                    retry_executed
+                    and final_trace is not None
+                    and final_result.search_response is not None
+                )
+                else None
+            ),
+            merged_raw_hit_count=final_trace.merged_raw_hit_count if final_trace is not None else 0,
+            merged_result_count=final_trace.merged_result_count if final_trace is not None else 0,
+            stop_reason=final_trace.stop_reason if final_trace is not None else None,
+            renderer_trusted_top_hit=(
+                final_trace.renderer_trusted_top_hit if final_trace is not None else None
+            ),
+            renderer_note=final_trace.renderer_note if final_trace is not None else None,
+        )
+        return QueryAnswerResult(
+            plan=final_result.plan,
+            blocks=final_result.blocks,
+            summary=final_result.summary,
+            sources=final_result.sources,
+            search_response=final_result.search_response,
+            fallback_used=final_result.fallback_used,
+            retrieval_trace=combined_trace,
+        )
+
+    def _log_pipeline_result(self, result: QueryAnswerResult) -> None:
         logger.info(
             "%s intent=%s scope=%s strategy=%s fallback_used=%s",
             LOG_EVENT_PIPELINE_RUN,
@@ -128,7 +359,6 @@ class KnowledgeBaseQueryPipeline:
             result.plan.strategy,
             result.fallback_used,
         )
-        return result
 
     def _get_retriever(self) -> KnowledgeBaseRetrievalService:
         if self._retriever is None:
@@ -136,10 +366,14 @@ class KnowledgeBaseQueryPipeline:
         return self._retriever
 
 
-def plan_retrieval_disabled_trace(plan: QueryPlan):
-    from app.services.knowledge_base.query.types import QueryRetrievalExecutionTrace
-
+def plan_retrieval_disabled_trace(plan: QueryPlan) -> QueryRetrievalExecutionTrace:
     return QueryRetrievalExecutionTrace(
+        initial_planned_queries=plan.retrieval_plan.planned_queries,
+        initial_executed_queries=(),
+        initial_result_count=0,
+        initial_top_score=None,
+        initial_stop_reason="retrieval_disabled_by_configuration",
+        retry_executed=False,
         planned_queries=plan.retrieval_plan.planned_queries,
         executed_queries=(),
         merged_raw_hit_count=0,
