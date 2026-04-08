@@ -87,10 +87,11 @@ class KnowledgeBaseVectorStoreClient:
         while True:
             for item in page.data:
                 file_id = str(item.id)
+                filename = _optional_non_empty_str(getattr(item, "filename", None))
                 files.append(
                     VectorStoreFileRecord(
                         file_id=file_id,
-                        filename=self._resolve_filename(file_id),
+                        filename=filename or self._resolve_filename(file_id),
                         attributes=normalize_attributes(getattr(item, "attributes", None)),
                     )
                 )
@@ -334,5 +335,10 @@ class KnowledgeBaseVectorStoreClient:
             )
         self._filename_cache[file_id] = filename
         return filename
+
+
+def _optional_non_empty_str(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 

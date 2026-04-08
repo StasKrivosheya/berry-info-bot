@@ -135,6 +135,29 @@ class FakeVectorStoreClient:
         )
 
 
+class DeleteFailingVectorStoreClient(FakeVectorStoreClient):
+    def delete_files_by_logical_id(
+        self,
+        logical_id: str,
+        *,
+        existing_files: list[VectorStoreFileRecord] | None = None,
+        delete_underlying: bool = True,
+        dry_run: bool = False,
+    ) -> DeleteReport:
+        raise RuntimeError(f"cannot delete {logical_id}")
+
+
+class UploadFailingVectorStoreClient(FakeVectorStoreClient):
+    def upload_markdown_file(
+        self,
+        markdown_path: Path,
+        *,
+        attributes: dict[str, str | float | bool],
+        dry_run: bool = False,
+    ) -> UploadResult:
+        raise RuntimeError(f"cannot upload {markdown_path.name}")
+
+
 def _settings() -> KnowledgeBaseOpenAISettings:
     return KnowledgeBaseOpenAISettings.model_validate(
         {
@@ -243,6 +266,50 @@ def test_sync_dry_run_marks_operations_without_mutating(tmp_path: Path) -> None:
     assert report.deleted_count == 1
     assert report.uploaded_count == 2
     assert report.failed_count == 0
+
+
+def test_sync_delete_failures_do_not_inflate_skipped_count(tmp_path: Path) -> None:
+    manifest_path = _write_manifest_with_two_docs(tmp_path)
+    fake_client = DeleteFailingVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="old_1",
+                filename="old.md",
+                attributes={"logical_id": "faq"},
+            )
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(manifest_path=manifest_path, replace=True, dry_run=False)
+
+    assert report.selected_count == 2
+    assert report.skipped_count == 0
+    assert report.failed_count == 1
+    assert report.uploaded_count == 0
+    assert report.failures[0].operation == "delete"
+
+
+def test_sync_upload_failures_do_not_inflate_skipped_count(tmp_path: Path) -> None:
+    manifest_path = _write_manifest_with_two_docs(tmp_path)
+    fake_client = UploadFailingVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="old_1",
+                filename="old.md",
+                attributes={"logical_id": "faq"},
+            )
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(manifest_path=manifest_path, replace=True, dry_run=False)
+
+    assert report.selected_count == 2
+    assert report.skipped_count == 0
+    assert report.failed_count == 2
+    assert report.uploaded_count == 0
+    assert all(failure.operation == "upload" for failure in report.failures)
 
 
 def test_sync_deletes_stale_workbook_records_for_renamed_sheet(tmp_path: Path) -> None:

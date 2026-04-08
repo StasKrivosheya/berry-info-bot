@@ -3,6 +3,7 @@
 import logging
 from collections import defaultdict
 
+from app.services.knowledge_base.query.rule_matcher import match_rule_evidence
 from app.services.knowledge_base.query.rules import INTENT_RULES, INTENT_TIE_BREAK_ORDER
 from app.services.knowledge_base.query.text import normalize_query_text
 from app.services.knowledge_base.query.types import QueryClassification, QueryIntent, RuleMatch
@@ -55,7 +56,12 @@ def classify_query_intent(query: str) -> QueryClassification:
 def _match_intent_rules(query: str) -> list[RuleMatch]:
     matches: list[RuleMatch] = []
     for rule in INTENT_RULES:
-        evidence = _match_rule(query, rule.contains_any, rule.contains_all, rule.regex_patterns)
+        evidence = match_rule_evidence(
+            query,
+            rule.contains_any,
+            rule.contains_all,
+            rule.regex_patterns,
+        )
         if not evidence:
             continue
         matches.append(
@@ -67,34 +73,6 @@ def _match_intent_rules(query: str) -> list[RuleMatch]:
             )
         )
     return matches
-
-
-def _match_rule(
-    query: str,
-    contains_any: tuple[str, ...],
-    contains_all: tuple[str, ...],
-    regex_patterns,
-) -> list[str]:
-    evidence: list[str] = []
-
-    if contains_all:
-        missing = [fragment for fragment in contains_all if fragment not in query]
-        if missing:
-            return []
-        evidence.extend(contains_all)
-
-    if contains_any:
-        matched_any = [fragment for fragment in contains_any if fragment in query]
-        if not matched_any:
-            return []
-        evidence.extend(matched_any)
-
-    regex_evidence = [pattern.pattern for pattern in regex_patterns if pattern.search(query)]
-    if regex_patterns and not regex_evidence and not evidence:
-        return []
-    evidence.extend(regex_evidence)
-
-    return evidence
 
 
 def _choose_intent(grouped: dict[QueryIntent, list[RuleMatch]]) -> QueryIntent:

@@ -81,7 +81,10 @@ async def _startup_runtime(state: RuntimeState, settings: Settings) -> None:
 
     state.database = await create_database(settings.database_url)
     state.bot = create_bot(settings.telegram_bot_token.get_secret_value())
-    state.dispatcher = create_dispatcher(settings.admin_user_ids)
+    state.dispatcher = create_dispatcher(
+        settings.admin_user_ids,
+        debug_commands_mode=settings.debug_commands_mode,
+    )
     # Polling is run in a task so FastAPI can continue serving /health concurrently.
     state.polling_task = asyncio.create_task(
         _run_polling_loop(state.dispatcher, state.bot),

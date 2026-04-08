@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,10 +11,13 @@ from app.core.constants import (
     DEFAULT_APP_HOST,
     DEFAULT_APP_NAME,
     DEFAULT_APP_PORT,
+    DEFAULT_DEBUG_COMMANDS_MODE,
     DEFAULT_LOG_LEVEL,
     ENV_FILE_FALLBACK,
     ENV_FILE_LOCAL,
 )
+
+DebugCommandsMode = Literal["disabled", "admins", "public"]
 
 
 class Settings(BaseSettings):
@@ -32,22 +36,14 @@ class Settings(BaseSettings):
     app_host: str = Field(default=DEFAULT_APP_HOST, validation_alias="APP_HOST")
     app_port: int = Field(default=DEFAULT_APP_PORT, validation_alias="APP_PORT")
     log_level: str = Field(default=DEFAULT_LOG_LEVEL, validation_alias="LOG_LEVEL")
+    debug_commands_mode: DebugCommandsMode = Field(
+        default=DEFAULT_DEBUG_COMMANDS_MODE,
+        validation_alias="DEBUG_COMMANDS_MODE",
+    )
 
     telegram_bot_token: SecretStr = Field(validation_alias="TELEGRAM_BOT_TOKEN")
     database_url: str = Field(validation_alias="DATABASE_URL")
     admin_user_ids_raw: str = Field(default="", validation_alias="ADMIN_USER_IDS")
-
-    # Reserved placeholder for future webhook migration; intentionally unused in Phase 1.
-    webhook_secret_path: str | None = Field(
-        default=None,
-        validation_alias="WEBHOOK_SECRET_PATH",
-    )
-
-    # Reserved placeholders for future Google integrations.
-    google_client_id: str | None = Field(default=None, validation_alias="GOOGLE_CLIENT_ID")
-    google_client_secret: str | None = Field(default=None, validation_alias="GOOGLE_CLIENT_SECRET")
-    google_project_id: str | None = Field(default=None, validation_alias="GOOGLE_PROJECT_ID")
-    google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
 
     @field_validator("database_url")
     @classmethod
@@ -56,6 +52,16 @@ class Settings(BaseSettings):
             msg = f"DATABASE_URL must start with '{DATABASE_URL_PREFIX}'"
             raise ValueError(msg)
         return value
+
+    @field_validator("debug_commands_mode", mode="before")
+    @classmethod
+    def validate_debug_commands_mode(cls, value: object) -> DebugCommandsMode:
+        normalized = str(value or DEFAULT_DEBUG_COMMANDS_MODE).strip().casefold()
+        if normalized in {"disabled", "admins", "public"}:
+            return normalized  # type: ignore[return-value]
+
+        msg = "DEBUG_COMMANDS_MODE must be one of: disabled, admins, public."
+        raise ValueError(msg)
 
     @property
     def admin_user_ids(self) -> tuple[int, ...]:

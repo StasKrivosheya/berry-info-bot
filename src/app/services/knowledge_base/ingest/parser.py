@@ -59,7 +59,7 @@ def parse_knowledge_base(
 ) -> BatchParseResult:
     """Parse CSV and XLSX sources into markdown plus a manifest."""
 
-    config = load_parse_config(config_path)
+    config = load_parse_config_impl(config_path)
     allowed_source_formats = source_formats or config.source_formats
 
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -259,14 +259,6 @@ def parse_knowledge_base(
         discovered_source_count=discovered_source_count,
         manifest_path=manifest_path,
     )
-
-
-def load_parse_config(config_path: Path | None) -> ParseConfig:
-    """Compatibility wrapper around dedicated parse config loader."""
-
-    return load_parse_config_impl(config_path)
-
-
 def _parse_csv_source(
     csv_path: Path,
     markdown_dir: Path,

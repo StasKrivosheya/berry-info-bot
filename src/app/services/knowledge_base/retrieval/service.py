@@ -181,7 +181,6 @@ class KnowledgeBaseRetrievalService:
                             message=str(exc),
                         )
                     )
-                    report.skipped_count += len(grouped_items)
                     continue
 
                 report.deleted_count += delete_report.deleted_count
@@ -234,12 +233,12 @@ class KnowledgeBaseRetrievalService:
         logical_id: str | None = None,
         attribute_filters: Attributes | None = None,
     ) -> SearchResponse:
-        resolved_max_results = _clamp_max_results(
+        resolved_max_results = clamp_search_max_results(
             max_num_results
             if max_num_results is not None
             else self._settings.openai_kb_search_max_results
         )
-        resolved_threshold = _clamp_score_threshold(
+        resolved_threshold = clamp_score_threshold(
             score_threshold
             if score_threshold is not None
             else self._settings.openai_kb_score_threshold
@@ -298,14 +297,6 @@ class KnowledgeBaseRetrievalService:
             result.used_threshold,
         )
         return result
-
-
-def _clamp_max_results(value: int) -> int:
-    return clamp_search_max_results(value)
-
-
-def _clamp_score_threshold(value: float) -> float:
-    return clamp_score_threshold(value)
 
 
 def _collect_stale_workbook_records(

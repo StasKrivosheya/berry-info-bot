@@ -51,8 +51,8 @@ class FakeBot:
 
 
 class FakeMessage:
-    def __init__(self, bot: FakeBot) -> None:
-        self.from_user = SimpleNamespace(id=1001)
+    def __init__(self, bot: FakeBot, *, user_id: int = 1001) -> None:
+        self.from_user = SimpleNamespace(id=user_id)
         self.chat = SimpleNamespace(id=2002)
         self.bot = bot
 
@@ -203,6 +203,9 @@ def _response_with_hit() -> SearchResponse:
     )
 
 
+PUBLIC_DEBUG_CONTEXT = {"debug_commands_mode": "public"}
+
+
 def test_extract_query_text_trims_whitespace() -> None:
     assert extract_query_text(_command("vs", "   how to register?   ")) == "how to register?"
     assert extract_query_text(_command("vs", None)) == ""
@@ -248,7 +251,13 @@ def test_vs_handler_returns_usage_when_query_is_empty(monkeypatch) -> None:
     message = FakeMessage(bot)
     monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: None)
 
-    asyncio.run(query_debug.vector_search_handler(message, _command("vs", None)))
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", None),
+            **PUBLIC_DEBUG_CONTEXT,
+        )
+    )
 
     assert [call["text"] for call in bot.calls] == [VS_USAGE_TEXT]
     assert bot.calls[0]["parse_mode"] is None
@@ -261,7 +270,13 @@ def test_vs_handler_returns_raw_search_hits(monkeypatch) -> None:
     monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: service)
     monkeypatch.setattr(query_debug, "_create_structure_reader", lambda: FakeStructureReader())
 
-    asyncio.run(query_debug.vector_search_handler(message, _command("vs", "how to register?")))
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", "how to register?"),
+            **PUBLIC_DEBUG_CONTEXT,
+        )
+    )
 
     assert service.calls == [{"query": "how to register?", "rewrite_query": False}]
     rendered = "".join(str(call["text"]) for call in bot.calls)
@@ -280,7 +295,13 @@ def test_vs_handler_returns_friendly_error_when_search_fails(monkeypatch) -> Non
     message = FakeMessage(bot)
     monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: FailingRetrievalService())
 
-    asyncio.run(query_debug.vector_search_handler(message, _command("vs", "how to register?")))
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", "how to register?"),
+            **PUBLIC_DEBUG_CONTEXT,
+        )
+    )
 
     assert [call["text"] for call in bot.calls] == [query_debug.VS_ERROR_TEXT]
     assert bot.calls[0]["parse_mode"] is None
@@ -296,6 +317,7 @@ def test_qclass_handler_renders_intent_rules(monkeypatch) -> None:
         query_debug.query_classification_handler(
             message,
             _command(query_debug.QCLASS_COMMAND_NAME, "Які є види організованих програм?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
@@ -316,6 +338,7 @@ def test_qplan_handler_renders_scope_strategy_and_retrieval_plan(monkeypatch) ->
         query_debug.query_plan_handler(
             message,
             _command(query_debug.QPLAN_COMMAND_NAME, "Які є види організованих програм?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
@@ -343,6 +366,7 @@ def test_qroute_handler_renders_policy_trace(monkeypatch) -> None:
         query_debug.query_route_handler(
             message,
             _command(query_debug.QROUTE_COMMAND_NAME, "Які є види організованих програм?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
@@ -367,6 +391,7 @@ def test_qanswer_handler_runs_structured_pipeline(monkeypatch) -> None:
         query_debug.query_answer_handler(
             message,
             _command(query_debug.QANSWER_COMMAND_NAME, "Які є види організованих програм?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
@@ -395,6 +420,7 @@ def test_qretrieve_handler_renders_retrieval_plan_and_trace(monkeypatch) -> None
         query_debug.query_retrieval_handler(
             message,
             _command(query_debug.QRETRIEVE_COMMAND_NAME, "Які є види організованих програм?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
@@ -415,8 +441,68 @@ def test_qdebug_handlers_return_friendly_error_when_pipeline_fails(monkeypatch) 
         query_debug.query_classification_handler(
             message,
             _command(query_debug.QCLASS_COMMAND_NAME, "Що ви можете мені запропонувати?"),
+            **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
     assert [call["text"] for call in bot.calls] == [query_debug.QDEBUG_ERROR_TEXT]
     assert bot.calls[0]["parse_mode"] is None
+
+
+def test_debug_commands_disabled_mode_blocks_debug_requests(monkeypatch) -> None:
+    bot = FakeBot()
+    message = FakeMessage(bot)
+    service = SuccessfulRetrievalService(_response_with_hit())
+    monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: service)
+
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", "how to register?"),
+            debug_commands_mode="disabled",
+            admin_user_ids={1001},
+        )
+    )
+
+    assert service.calls == []
+    assert [call["text"] for call in bot.calls] == [query_debug.QDEBUG_DISABLED_TEXT]
+
+
+def test_debug_commands_admin_mode_blocks_non_admin_user(monkeypatch) -> None:
+    bot = FakeBot()
+    message = FakeMessage(bot, user_id=5555)
+    service = SuccessfulRetrievalService(_response_with_hit())
+    monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: service)
+
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", "how to register?"),
+            debug_commands_mode="admins",
+            admin_user_ids={1001},
+        )
+    )
+
+    assert service.calls == []
+    assert [call["text"] for call in bot.calls] == [query_debug.QDEBUG_ADMIN_ONLY_TEXT]
+
+
+def test_debug_commands_admin_mode_allows_admin_user(monkeypatch) -> None:
+    bot = FakeBot()
+    message = FakeMessage(bot, user_id=1001)
+    service = SuccessfulRetrievalService(_response_with_hit())
+    monkeypatch.setattr(query_debug, "_create_retrieval_service", lambda: service)
+    monkeypatch.setattr(query_debug, "_create_structure_reader", lambda: FakeStructureReader())
+
+    asyncio.run(
+        query_debug.vector_search_handler(
+            message,
+            _command("vs", "how to register?"),
+            debug_commands_mode="admins",
+            admin_user_ids={1001},
+        )
+    )
+
+    assert service.calls == [{"query": "how to register?", "rewrite_query": False}]
+    rendered = "".join(str(call["text"]) for call in bot.calls)
+    assert "query=how to register?" in rendered
