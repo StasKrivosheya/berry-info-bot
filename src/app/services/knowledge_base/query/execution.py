@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
@@ -17,6 +18,7 @@ from app.services.knowledge_base.query.types import (
     AnswerBlock,
     QueryAnswerResult,
     QueryPlan,
+    QueryRetrievalExecutionTrace,
     SearchHitDebugContext,
     StructuredDocument,
     StructuredSection,
@@ -33,6 +35,89 @@ LOG_EVENT_QUERY_EXECUTION = "kb_query_execution"
 LOG_EVENT_DETAIL_RESULT_SKIPPED = "kb_query_detail_result_skipped"
 LOG_EVENT_STRUCTURE_MAPPING = "kb_query_structure_mapping"
 LOG_EVENT_RAW_DETAIL_FALLBACK = "kb_query_raw_detail_fallback"
+TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+DETAIL_FACET_TIME = "time"
+DETAIL_FACET_PRICE = "price"
+DETAIL_FACET_AVAILABILITY = "availability"
+DETAIL_FACET_LOCATION = "location"
+DETAIL_FACET_ANIMALS = "animals"
+TIME_QUERY_HINTS = (
+    "коли",
+    "відкривається",
+    "відкриваєтесь",
+    "працює",
+    "графік",
+    "час",
+    "годин",
+)
+TIME_SECTION_HINTS = (
+    "графік роботи",
+    "час роботи",
+    "парк працює",
+    "працює",
+    "з 10:00",
+    "до 19:00",
+)
+PRICE_QUERY_HINTS = ("скільки", "вартість", "ціна", "коштує", "грн")
+PRICE_SECTION_HINTS = ("вартість", "ціна", "грн", "квит")
+AVAILABILITY_QUERY_HINTS = ("чи є", "є у вас", "можна", "доступно")
+LOCATION_QUERY_HINTS = ("де", "як доїхати", "трансфер", "адрес")
+ANIMAL_QUERY_HINTS = (
+    "тварин",
+    "тваринки",
+    "тварини",
+    "зоопарк",
+    "звірят",
+    "ранчо",
+)
+ANIMAL_SECTION_HINTS = (
+    "тварин",
+    "тваринки",
+    "поні-ферм",
+    "ферма до тваринок",
+    "ранчо",
+    "альпак",
+    "козлик",
+    "поні",
+)
+GENERIC_TIME_PENALTIES = (
+    "додаткові послуги",
+    "послуги на території",
+    "вартість",
+)
+GENERIC_ANIMAL_PENALTIES = (
+    "додаткові послуги",
+    "послуги на території",
+    "водні розваги",
+    "вартість",
+)
+GENERIC_SUPPORT_TOKEN_KEYS = frozenset(
+    {
+        "скільк",
+        "коштує",
+        "вартіс",
+        "ціна",
+        "коли",
+        "відкри",
+        "працює",
+        "графік",
+        "час",
+        "можна",
+        "де",
+        "які",
+        "який",
+        "що",
+        "хто",
+        "є",
+        "чи",
+        "маєте",
+        "мають",
+        "розкаж",
+        "порадь",
+    }
+)
+MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING = 0.7
+MIN_RETRIEVAL_SUPPORT_COVERAGE = 0.5
 
 PROGRAM_HEADING_EXCLUDES = (
     "види програм",
@@ -54,6 +139,7 @@ def execute_query_plan(
     *,
     structure_reader: KnowledgeBaseStructureReader,
     search_response: SearchResponse | None = None,
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult:
     documents = (
         structure_reader.documents_for_scopes(plan.scope_detection.scopes)
@@ -80,14 +166,20 @@ def execute_query_plan(
     if plan.strategy == "enumeration_catalog":
         result = _build_enumeration_result(plan, documents)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "overview_summary":
         result = _build_overview_result(plan, documents)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "comparison_summary":
         result = _build_comparison_result(plan, query, documents, search_response)
         if result is not None:
+            if result.retrieval_trace is None:
+                result = _with_retrieval_trace(result, retrieval_trace)
             return result
     elif plan.strategy == "detail_retrieval":
         detail_attempted = True
@@ -97,11 +189,12 @@ def execute_query_plan(
             documents,
             search_response,
             structure_reader=structure_reader,
+            retrieval_trace=retrieval_trace,
         )
         if detail_result is not None:
             return detail_result
 
-    return _build_safe_fallback_result(
+    result = _build_safe_fallback_result(
         plan,
         query,
         documents,
@@ -109,7 +202,11 @@ def execute_query_plan(
         structure_reader=structure_reader,
         detail_result=detail_result,
         detail_attempted=detail_attempted,
+        retrieval_trace=retrieval_trace,
     )
+    if result.retrieval_trace is None:
+        result = _with_retrieval_trace(result, retrieval_trace)
+    return result
 
 
 def _build_enumeration_result(
@@ -248,6 +345,7 @@ def _build_detail_result(
     search_response: SearchResponse | None,
     *,
     structure_reader: KnowledgeBaseStructureReader,
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult | None:
     if search_response is None:
         logger.debug("%s reason=no_search_response", LOG_EVENT_DETAIL_RESULT_SKIPPED)
@@ -262,62 +360,103 @@ def _build_detail_result(
 
     query_text = normalize_query_text(query)
     query_tokens = tokenize_text(query)
+    detail_facet = _detect_detail_facet(query_text)
+    ranking_tokens = (
+        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(plan))))
+        if _should_expand_ranking_tokens(plan)
+        else query_tokens
+    )
     support = _document_support(search_response)
     documents_by_id = {document.logical_id: document for document in documents}
     _log_structure_mapping(search_response, documents_by_id, structure_reader)
-    ranked_sections: list[tuple[float, StructuredDocument, StructuredSection]] = []
-
-    for document in documents:
-        for section in document.sections:
-            score = _score_section(
-                query_text=query_text,
-                query_tokens=query_tokens,
-                section=section,
-                support_score=support.get(document.logical_id, 0.0),
-            )
-            if score <= 0:
-                continue
-            ranked_sections.append((score, document, section))
-
-    if not ranked_sections:
-        logger.debug(
-            "%s reason=no_ranked_sections query_tokens=%s supported_documents=%s",
-            LOG_EVENT_DETAIL_RESULT_SKIPPED,
-            query_tokens,
-            tuple(sorted(support.keys())),
+    if not _search_response_supports_query(
+        search_response,
+        plan,
+        query_tokens,
+        documents_by_id,
+    ):
+        unsupported_result = QueryAnswerResult(
+            plan=plan,
+            summary=NO_RELEVANT_INFO_FALLBACK,
+            blocks=(),
+            sources=(),
+            search_response=search_response,
+            fallback_used=True,
         )
-        return None
-
-    ranked_sections.sort(
-        key=lambda item: (-item[0], item[1].logical_id, item[2].heading.casefold())
-    )
+        return _with_retrieval_trace(
+            unsupported_result,
+            retrieval_trace,
+            trusted_top_hit=False,
+            note="no_specific_query_evidence_in_hits",
+        )
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
-    seen_blocks: set[tuple[str, tuple[str, ...]]] = set()
+    seen_block_keys: set[tuple[str, tuple[str, ...] | str]] = set()
+    trusted_top_hit = False
+    renderer_note = "no_hit_anchored_block"
 
-    for _, document, section in ranked_sections:
-        block_key = (document.logical_id, section.heading_path)
-        if block_key in seen_blocks:
-            continue
-        block = _detail_block(document, section, query_tokens)
+    for index, hit in enumerate(search_response.results):
+        logical_id = _search_hit_logical_id(hit)
+        document = documents_by_id.get(logical_id)
+        hit_context = _resolve_hit_context(structure_reader, hit)
+        block = None
+        block_key: tuple[str, tuple[str, ...] | str] | None = None
+
+        if document is not None:
+            section = _select_best_section_for_hit(
+                document,
+                hit_context=hit_context,
+                query_text=query_text,
+                query_tokens=ranking_tokens,
+                support_score=support.get(logical_id, 0.0),
+                detail_facet=detail_facet,
+            )
+            if section is not None:
+                block_key = (document.logical_id, section.heading_path)
+                if block_key not in seen_block_keys:
+                    block = _detail_block(document, section, ranking_tokens, detail_facet)
+                    if block is not None and index == 0:
+                        trusted_top_hit = True
+                        renderer_note = "used_hit_anchored_section"
+
         if block is None:
+            raw_title = _raw_hit_title(hit, hit_context)
+            block_key = (logical_id, raw_title)
+            if block_key not in seen_block_keys:
+                block = _raw_hit_detail_block(
+                    hit,
+                    raw_title=raw_title,
+                    query_tokens=ranking_tokens,
+                    detail_facet=detail_facet,
+                )
+                if block is not None and index == 0:
+                    trusted_top_hit = True
+                    renderer_note = "used_top_hit_raw_lines"
+
+        if block is None or block_key is None:
             continue
-        seen_blocks.add(block_key)
+        seen_block_keys.add(block_key)
         blocks.append(block)
-        sources.append(document.logical_id)
+        sources.append(logical_id)
         if len(blocks) >= 2:
             break
 
     if not blocks:
         return None
 
-    return QueryAnswerResult(
+    result = QueryAnswerResult(
         plan=plan,
         summary="Знайшов найближчі розділи:",
         blocks=tuple(blocks),
         sources=tuple(_dedupe(sources)),
         search_response=search_response,
         fallback_used=False,
+    )
+    return _with_retrieval_trace(
+        result,
+        retrieval_trace,
+        trusted_top_hit=trusted_top_hit,
+        note=renderer_note,
     )
 
 
@@ -330,6 +469,7 @@ def _build_safe_fallback_result(
     structure_reader: KnowledgeBaseStructureReader,
     detail_result: QueryAnswerResult | None = None,
     detail_attempted: bool = False,
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult:
     if detail_result is None and not detail_attempted:
         detail_result = _build_detail_result(
@@ -338,8 +478,11 @@ def _build_safe_fallback_result(
             documents,
             search_response,
             structure_reader=structure_reader,
+            retrieval_trace=retrieval_trace,
         )
     if detail_result is not None:
+        if not detail_result.blocks and detail_result.summary == NO_RELEVANT_INFO_FALLBACK:
+            return detail_result
         return QueryAnswerResult(
             plan=plan,
             summary="Не вдалося впевнено класифікувати запит. Показую найближчі розділи:",
@@ -347,6 +490,7 @@ def _build_safe_fallback_result(
             sources=detail_result.sources,
             search_response=search_response,
             fallback_used=True,
+            retrieval_trace=detail_result.retrieval_trace,
         )
 
     raw_hit_result = _build_raw_hit_fallback_result(
@@ -354,6 +498,7 @@ def _build_safe_fallback_result(
         query,
         search_response,
         structure_reader=structure_reader,
+        retrieval_trace=retrieval_trace,
     )
     if raw_hit_result is not None:
         return raw_hit_result
@@ -494,11 +639,13 @@ def _detail_block(
     document: StructuredDocument,
     section: StructuredSection,
     query_tokens: tuple[str, ...],
+    detail_facet: str | None,
 ) -> AnswerBlock | None:
     items = _extract_section_items(section.body)
     ranked_items: list[tuple[int, str]] = []
     for item in items:
         score = token_overlap_score(query_tokens, tokenize_text(item))
+        score += _detail_item_bonus(item, detail_facet)
         ranked_items.append((score, item))
 
     ranked_items.sort(key=lambda item: (-item[0], item[1].casefold()))
@@ -520,14 +667,23 @@ def _build_raw_hit_fallback_result(
     search_response: SearchResponse | None,
     *,
     structure_reader: KnowledgeBaseStructureReader,
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult | None:
     if search_response is None or not search_response.results:
         return None
 
     query_tokens = tokenize_text(query)
+    detail_facet = _detect_detail_facet(normalize_query_text(query))
+    ranking_tokens = (
+        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(plan))))
+        if _should_expand_ranking_tokens(plan)
+        else query_tokens
+    )
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
     seen_blocks: set[tuple[str, str]] = set()
+    trusted_top_hit = False
+    renderer_note = "no_raw_hit_lines"
 
     for hit in search_response.results:
         logical_id = _search_hit_logical_id(hit)
@@ -537,7 +693,7 @@ def _build_raw_hit_fallback_result(
         if block_key in seen_blocks:
             continue
 
-        lines = _rank_hit_lines(hit.text, query_tokens)
+        lines = _rank_hit_lines(hit.text, ranking_tokens, detail_facet)
         if lines:
             block = AnswerBlock(title=title, lines=tuple(lines))
         else:
@@ -549,6 +705,9 @@ def _build_raw_hit_fallback_result(
         seen_blocks.add(block_key)
         blocks.append(block)
         sources.append(logical_id)
+        if not trusted_top_hit:
+            trusted_top_hit = True
+            renderer_note = "used_top_hit_raw_lines"
         if len(blocks) >= 2:
             break
 
@@ -561,13 +720,19 @@ def _build_raw_hit_fallback_result(
         len(blocks),
         len(_dedupe(sources)),
     )
-    return QueryAnswerResult(
+    result = QueryAnswerResult(
         plan=plan,
         summary="Не вдалося побудувати структуровану відповідь. Показую найближчі сирі збіги:",
         blocks=tuple(blocks),
         sources=tuple(_dedupe(sources)),
         search_response=search_response,
         fallback_used=True,
+    )
+    return _with_retrieval_trace(
+        result,
+        retrieval_trace,
+        trusted_top_hit=trusted_top_hit,
+        note=renderer_note,
     )
 
 
@@ -673,7 +838,11 @@ def _resolve_hit_context(
         return None
 
 
-def _rank_hit_lines(text: str, query_tokens: tuple[str, ...]) -> list[str]:
+def _rank_hit_lines(
+    text: str,
+    query_tokens: tuple[str, ...],
+    detail_facet: str | None = None,
+) -> list[str]:
     ranked_lines: list[tuple[int, str]] = []
     fallback_lines: list[str] = []
     seen_lines: set[str] = set()
@@ -693,6 +862,7 @@ def _rank_hit_lines(text: str, query_tokens: tuple[str, ...]) -> list[str]:
         seen_lines.add(key)
 
         overlap = token_overlap_score(query_tokens, tokenize_text(cleaned))
+        overlap += _detail_item_bonus(cleaned, detail_facet)
         if overlap > 0:
             ranked_lines.append((overlap, cleaned))
             continue
@@ -717,3 +887,275 @@ def _raw_hit_title(hit: SearchHit, hit_context: SearchHitDebugContext | None) ->
 def _search_hit_logical_id(hit: SearchHit) -> str:
     logical_id = str(hit.attributes.get("logical_id", "")).strip()
     return logical_id or Path(hit.filename).stem
+
+
+def _retrieval_ranking_tokens(plan: QueryPlan) -> tuple[str, ...]:
+    token_source = "\n".join(
+        (
+            plan.retrieval_plan.primary_query,
+            "\n".join(plan.retrieval_plan.alternate_queries),
+            "\n".join(plan.retrieval_plan.keywords),
+        )
+    )
+    return tokenize_text(token_source)
+
+
+def _should_expand_ranking_tokens(plan: QueryPlan) -> bool:
+    return (
+        plan.policy_trace.mode == "forced"
+        or plan.retrieval_plan.confidence >= MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING
+    )
+
+
+def _search_response_supports_query(
+    search_response: SearchResponse,
+    plan: QueryPlan,
+    query_tokens: tuple[str, ...],
+    documents_by_id: dict[str, StructuredDocument],
+) -> bool:
+    content_tokens = _content_support_tokens(query_tokens)
+    if not content_tokens:
+        return True
+
+    search_tokens = _search_response_tokens(search_response, documents_by_id)
+    query_coverage = _token_coverage(content_tokens, search_tokens)
+    if query_coverage >= 1.0:
+        return True
+
+    if plan.retrieval_plan.confidence < MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING:
+        return False
+
+    retrieval_tokens = _content_support_tokens(
+        tokenize_text("\n".join(plan.retrieval_plan.keywords))
+    )
+    if not retrieval_tokens:
+        retrieval_tokens = _content_support_tokens(
+            tokenize_text("\n".join(plan.retrieval_plan.alternate_queries))
+        )
+    if not retrieval_tokens:
+        return False
+
+    retrieval_coverage = _token_coverage(retrieval_tokens, search_tokens)
+    return retrieval_coverage >= MIN_RETRIEVAL_SUPPORT_COVERAGE
+
+
+def _content_support_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            token for token in tokens if token and token not in GENERIC_SUPPORT_TOKEN_KEYS
+        )
+    )
+
+
+def _search_response_tokens(
+    search_response: SearchResponse,
+    documents_by_id: dict[str, StructuredDocument],
+) -> set[str]:
+    tokens: set[str] = set()
+    for hit in search_response.results[:5]:
+        tokens.update(tokenize_text(f"{hit.filename}\n{hit.text}"))
+        document = documents_by_id.get(_search_hit_logical_id(hit))
+        if document is None:
+            continue
+        for section in document.sections:
+            tokens.update(tokenize_text(f"{section.heading}\n{section.body}"))
+    return tokens
+
+
+def _token_coverage(tokens: tuple[str, ...], haystack: set[str]) -> float:
+    if not tokens:
+        return 0.0
+    matched = sum(1 for token in tokens if token in haystack)
+    return matched / len(tokens)
+
+
+def _with_retrieval_trace(
+    result: QueryAnswerResult,
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+    *,
+    trusted_top_hit: bool | None = None,
+    note: str | None = None,
+) -> QueryAnswerResult:
+    trace = retrieval_trace
+    if trace is not None:
+        trace = QueryRetrievalExecutionTrace(
+            initial_planned_queries=trace.initial_planned_queries,
+            initial_executed_queries=trace.initial_executed_queries,
+            initial_result_count=trace.initial_result_count,
+            initial_top_score=trace.initial_top_score,
+            initial_stop_reason=trace.initial_stop_reason,
+            llm_escalation_triggered=trace.llm_escalation_triggered,
+            llm_escalation_reason=trace.llm_escalation_reason,
+            retry_executed=trace.retry_executed,
+            planned_queries=trace.planned_queries,
+            executed_queries=trace.executed_queries,
+            retry_result_count=trace.retry_result_count,
+            retry_top_score=trace.retry_top_score,
+            merged_raw_hit_count=trace.merged_raw_hit_count,
+            merged_result_count=trace.merged_result_count,
+            stop_reason=trace.stop_reason,
+            renderer_trusted_top_hit=(
+                trusted_top_hit
+                if trusted_top_hit is not None
+                else trace.renderer_trusted_top_hit
+            ),
+            renderer_note=note if note is not None else trace.renderer_note,
+        )
+    return QueryAnswerResult(
+        plan=result.plan,
+        blocks=result.blocks,
+        summary=result.summary,
+        sources=result.sources,
+        search_response=result.search_response,
+        fallback_used=result.fallback_used,
+        retrieval_trace=trace,
+    )
+
+
+def _select_best_section_for_hit(
+    document: StructuredDocument,
+    *,
+    hit_context: SearchHitDebugContext | None,
+    query_text: str,
+    query_tokens: tuple[str, ...],
+    support_score: float,
+    detail_facet: str | None,
+) -> StructuredSection | None:
+    hit_path = hit_context.heading_path if hit_context is not None else ()
+    ranked_sections: list[tuple[float, StructuredSection]] = []
+    for section in document.sections:
+        score = _score_section(
+            query_text=query_text,
+            query_tokens=query_tokens,
+            section=section,
+            support_score=support_score,
+        )
+        score += _hit_anchor_bonus(section.heading_path, hit_path, detail_facet)
+        score += _detail_section_bonus(section, detail_facet)
+        score -= _detail_section_penalty(section, detail_facet)
+        if score <= 0:
+            continue
+        ranked_sections.append((score, section))
+    if not ranked_sections:
+        return None
+    ranked_sections.sort(key=lambda item: (-item[0], len(item[1].heading_path)))
+    return ranked_sections[0][1]
+
+
+def _raw_hit_detail_block(
+    hit: SearchHit,
+    *,
+    raw_title: str,
+    query_tokens: tuple[str, ...],
+    detail_facet: str | None,
+) -> AnswerBlock | None:
+    lines = _rank_hit_lines(hit.text, query_tokens, detail_facet)
+    if lines:
+        return AnswerBlock(title=raw_title, lines=tuple(lines))
+    excerpt = shorten_text(hit.text, limit=420)
+    if excerpt:
+        return AnswerBlock(title=raw_title, body=excerpt)
+    return None
+
+
+def _detect_detail_facet(query_text: str) -> str | None:
+    if any(hint in query_text for hint in TIME_QUERY_HINTS):
+        return DETAIL_FACET_TIME
+    if any(hint in query_text for hint in PRICE_QUERY_HINTS):
+        return DETAIL_FACET_PRICE
+    if any(hint in query_text for hint in ANIMAL_QUERY_HINTS):
+        return DETAIL_FACET_ANIMALS
+    if any(hint in query_text for hint in LOCATION_QUERY_HINTS):
+        return DETAIL_FACET_LOCATION
+    if any(hint in query_text for hint in AVAILABILITY_QUERY_HINTS):
+        return DETAIL_FACET_AVAILABILITY
+    return None
+
+
+def _detail_section_bonus(section: StructuredSection, detail_facet: str | None) -> int:
+    heading = section.heading.casefold()
+    body = section.body.casefold()
+    if detail_facet == DETAIL_FACET_TIME:
+        score = 0
+        if any(hint in heading for hint in TIME_SECTION_HINTS):
+            score += 14
+        if any(hint in body for hint in TIME_SECTION_HINTS):
+            score += 10
+        if TIME_RE.search(section.body):
+            score += 8
+        return score
+    if detail_facet == DETAIL_FACET_PRICE:
+        score = 0
+        if any(hint in heading for hint in PRICE_SECTION_HINTS):
+            score += 12
+        if any(hint in body for hint in PRICE_SECTION_HINTS):
+            score += 8
+        return score
+    if detail_facet == DETAIL_FACET_ANIMALS:
+        score = 0
+        if any(hint in heading for hint in ANIMAL_SECTION_HINTS):
+            score += 14
+        if any(hint in body for hint in ANIMAL_SECTION_HINTS):
+            score += 10
+        if any(hint in body for hint in ("тварин", "козлик", "альпак", "мешкан")):
+            score += 12
+        return score
+    return 0
+
+
+def _detail_section_penalty(section: StructuredSection, detail_facet: str | None) -> int:
+    if detail_facet != DETAIL_FACET_TIME:
+        if detail_facet != DETAIL_FACET_ANIMALS:
+            return 0
+        heading = section.heading.casefold()
+        body = section.body.casefold()
+        penalty = 0
+        if any(hint in heading for hint in GENERIC_ANIMAL_PENALTIES):
+            penalty += 12
+        if not any(hint in f"{heading}\n{body}" for hint in ANIMAL_SECTION_HINTS):
+            penalty += 10
+        if not any(hint in body for hint in ("тварин", "козлик", "альпак", "мешкан")):
+            penalty += 8
+        return penalty
+    heading = section.heading.casefold()
+    if any(hint in heading for hint in GENERIC_TIME_PENALTIES):
+        return 12
+    return 0
+
+
+def _detail_item_bonus(text: str, detail_facet: str | None) -> int:
+    normalized = normalize_query_text(text)
+    if detail_facet == DETAIL_FACET_TIME:
+        score = 0
+        if any(hint in normalized for hint in TIME_SECTION_HINTS):
+            score += 8
+        if TIME_RE.search(text):
+            score += 6
+        return score
+    if detail_facet == DETAIL_FACET_PRICE:
+        if any(hint in normalized for hint in PRICE_SECTION_HINTS):
+            return 6
+    if detail_facet == DETAIL_FACET_ANIMALS:
+        score = 0
+        if any(hint in normalized for hint in ANIMAL_SECTION_HINTS):
+            score += 8
+        return score
+    return 0
+
+
+def _hit_anchor_bonus(
+    section_path: tuple[str, ...],
+    hit_path: tuple[str, ...],
+    detail_facet: str | None,
+) -> int:
+    if not hit_path:
+        return 0
+    if section_path == hit_path:
+        return 8 if detail_facet == DETAIL_FACET_ANIMALS else 20
+    if len(hit_path) > 1 and section_path == hit_path[: len(section_path)]:
+        return 8
+    if len(section_path) > 1 and len(hit_path) > 1 and section_path[:-1] == hit_path[:-1]:
+        return 5
+    if section_path[:1] == hit_path[:1]:
+        return 2
+    return 0

@@ -24,6 +24,9 @@ QueryStrategy = Literal[
     "comparison_summary",
     "safe_fallback",
 ]
+QueryDecisionSource = Literal["rules", "llm", "default"]
+QueryLLMMode = Literal["disabled", "fallback", "forced"]
+QueryInterpretationStage = Literal["classifier", "scope", "planner", "retrieval"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,7 @@ class QueryClassification:
     confidence: float
     matched_rules: tuple[RuleMatch, ...] = ()
     rationale: tuple[str, ...] = ()
+    source: QueryDecisionSource = "rules"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +53,67 @@ class QueryScopeDetection:
     confidence: float
     matched_rules: tuple[RuleMatch, ...] = ()
     rationale: tuple[str, ...] = ()
+    source: QueryDecisionSource = "rules"
+
+
+@dataclass(frozen=True, slots=True)
+class QueryRetrievalHints:
+    primary_query: str
+    alternate_queries: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+    confidence: float = 0.0
+    debug_note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QueryRetrievalPlan:
+    primary_query: str
+    alternate_queries: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+    confidence: float = 0.0
+    source: QueryDecisionSource = "rules"
+    rationale: tuple[str, ...] = ()
+    debug_note: str | None = None
+
+    @property
+    def planned_queries(self) -> tuple[str, ...]:
+        return tuple(
+            query
+            for query in (self.primary_query, *self.alternate_queries)
+            if query
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryStageToggles:
+    rules_enabled: bool = True
+    scope_enabled: bool = True
+    planner_enabled: bool = True
+    retrieval_enabled: bool = True
+    renderer_enabled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class QueryPolicyTrace:
+    mode: QueryLLMMode = "disabled"
+    llm_allowed_for: tuple[QueryInterpretationStage, ...] = ()
+    stage_toggles: QueryStageToggles = field(default_factory=QueryStageToggles)
+    rules_min_confidence: float = 0.0
+    deterministic_classification: QueryClassification | None = None
+    deterministic_scope_detection: QueryScopeDetection | None = None
+    deterministic_strategy: QueryStrategy = "safe_fallback"
+    deterministic_retrieval_plan: QueryRetrievalPlan | None = None
+    final_intent_source: QueryDecisionSource = "default"
+    final_scope_source: QueryDecisionSource = "default"
+    final_strategy_source: QueryDecisionSource = "default"
+    final_retrieval_source: QueryDecisionSource = "default"
+    llm_requested: bool = False
+    llm_used: bool = False
+    llm_cache_hit: bool = False
+    llm_stages_requested: tuple[QueryInterpretationStage, ...] = ()
+    llm_skip_reason: str | None = None
+    llm_failure_reason: str | None = None
+    llm_debug_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +121,12 @@ class QueryPlan:
     classification: QueryClassification
     scope_detection: QueryScopeDetection
     strategy: QueryStrategy
+    retrieval_plan: QueryRetrievalPlan
     needs_retrieval: bool
     needs_structure: bool
     rationale: tuple[str, ...] = ()
+    strategy_source: QueryDecisionSource = "rules"
+    policy_trace: QueryPolicyTrace = field(default_factory=QueryPolicyTrace)
 
     @property
     def intent(self) -> QueryIntent:
@@ -80,6 +148,28 @@ class QueryAnswerResult:
     sources: tuple[str, ...] = ()
     search_response: SearchResponse | None = None
     fallback_used: bool = False
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QueryRetrievalExecutionTrace:
+    initial_planned_queries: tuple[str, ...] = ()
+    initial_executed_queries: tuple[str, ...] = ()
+    initial_result_count: int = 0
+    initial_top_score: float | None = None
+    initial_stop_reason: str | None = None
+    llm_escalation_triggered: bool = False
+    llm_escalation_reason: str | None = None
+    retry_executed: bool = False
+    planned_queries: tuple[str, ...] = ()
+    executed_queries: tuple[str, ...] = ()
+    retry_result_count: int = 0
+    retry_top_score: float | None = None
+    merged_raw_hit_count: int = 0
+    merged_result_count: int = 0
+    stop_reason: str | None = None
+    renderer_trusted_top_hit: bool | None = None
+    renderer_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
