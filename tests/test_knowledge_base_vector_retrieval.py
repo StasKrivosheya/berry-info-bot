@@ -437,6 +437,161 @@ def test_sync_skips_workbook_stale_cleanup_when_manifest_has_errors(tmp_path: Pa
     assert report.uploaded_count == 1
 
 
+def test_sync_filtered_run_keeps_unrelated_workbook_records(tmp_path: Path) -> None:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+    (markdown_dir / "book-a.md").write_text("# A\n", encoding="utf-8")
+    (markdown_dir / "book-b.md").write_text("# B\n", encoding="utf-8")
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "A",
+                        "sheet_index": 1,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-a.md"],
+                        "logical_id": "book-a",
+                        "category": "offers",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-09T00:00:00+00:00",
+                        "content_hash_sha256": "hash-a",
+                    },
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "B",
+                        "sheet_index": 2,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-b.md"],
+                        "logical_id": "book-b",
+                        "category": "offers",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-09T00:00:00+00:00",
+                        "content_hash_sha256": "hash-b",
+                    },
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_client = FakeVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="existing-a",
+                filename="book-a.md",
+                attributes={
+                    "logical_id": "book-a",
+                    "workbook_file": "book.xlsx",
+                    "sheet_name": "A",
+                    "sheet_index": "1",
+                },
+            ),
+            VectorStoreFileRecord(
+                file_id="existing-b",
+                filename="book-b.md",
+                attributes={
+                    "logical_id": "book-b",
+                    "workbook_file": "book.xlsx",
+                    "sheet_name": "B",
+                    "sheet_index": "2",
+                },
+            ),
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(
+        manifest_path=manifest_path,
+        replace=True,
+        dry_run=False,
+        only_logical_id="book-a",
+    )
+
+    assert fake_client.delete_record_calls == []
+    assert fake_client.delete_calls == [
+        {
+            "logical_id": "book-a",
+            "dry_run": False,
+            "matched": 1,
+        }
+    ]
+    assert report.selected_count == 1
+    assert report.skipped_count == 1
+    assert report.deleted_count == 1
+    assert report.uploaded_count == 1
+
+
+def test_sync_treats_numeric_sheet_index_variants_as_same_sheet(tmp_path: Path) -> None:
+    output_dir = tmp_path / "processed"
+    markdown_dir = output_dir / "markdown"
+    markdown_dir.mkdir(parents=True, exist_ok=True)
+    (markdown_dir / "book-a.md").write_text("# A\n", encoding="utf-8")
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "output_dir": output_dir.as_posix(),
+                "entries": [
+                    {
+                        "source_file": "book.xlsx",
+                        "source_format": "xlsx",
+                        "sheet_name": "A",
+                        "sheet_index": 1,
+                        "workbook_file": "book.xlsx",
+                        "output_md_file": ["markdown/book-a.md"],
+                        "logical_id": "book-a",
+                        "category": "offers",
+                        "version": "1.0",
+                        "updated_at_utc": "2026-04-09T00:00:00+00:00",
+                        "content_hash_sha256": "hash-a",
+                    }
+                ],
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_client = FakeVectorStoreClient(
+        files=[
+            VectorStoreFileRecord(
+                file_id="existing-a",
+                filename="book-a.md",
+                attributes={
+                    "logical_id": "book-a",
+                    "workbook_file": "book.xlsx",
+                    "sheet_name": "A",
+                    "sheet_index": 1.0,
+                },
+            )
+        ]
+    )
+    service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())
+
+    report = service.sync_from_manifest(manifest_path=manifest_path, replace=True, dry_run=False)
+
+    assert fake_client.delete_record_calls == []
+    assert fake_client.delete_calls == [
+        {
+            "logical_id": "book-a",
+            "dry_run": False,
+            "matched": 1,
+        }
+    ]
+    assert report.deleted_count == 1
+    assert report.uploaded_count == 1
+
+
 def test_search_normalizes_results_and_applies_default_language_filter() -> None:
     fake_client = FakeVectorStoreClient()
     service = KnowledgeBaseRetrievalService(vector_store_client=fake_client, settings=_settings())

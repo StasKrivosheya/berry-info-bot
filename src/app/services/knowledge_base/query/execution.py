@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 
 from app.services.knowledge_base.query.execution_strategies import (
     build_comparison_result,
@@ -39,6 +38,7 @@ from app.services.knowledge_base.types_openai import (
     SearchHit,
     SearchResponse,
 )
+from app.services.knowledge_base.utils import search_hit_logical_id
 
 logger = logging.getLogger(__name__)
 
@@ -139,15 +139,12 @@ def execute_query_plan(
     search_response: SearchResponse | None = None,
     retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult:
-    documents = (
-        structure_reader.documents_for_scopes(plan.scope_detection.scopes)
-        if plan.needs_structure
-        else ()
-    )
+    documents, broadened_scope = _resolve_documents_for_plan(plan, structure_reader)
     logger.debug(
         (
             "%s query=%r intent=%s scope=%s strategy=%s "
-            "structured_document_count=%s retrieval_hit_count=%s manifest=%s"
+            "structured_document_count=%s broadened_scope=%s "
+            "retrieval_hit_count=%s manifest=%s"
         ),
         LOG_EVENT_QUERY_EXECUTION,
         query,
@@ -155,6 +152,7 @@ def execute_query_plan(
         plan.scope_detection.primary_scope,
         plan.strategy,
         len(documents),
+        broadened_scope,
         len(search_response.results) if search_response is not None else 0,
         structure_reader.manifest_path.as_posix(),
     )
@@ -205,6 +203,40 @@ def execute_query_plan(
     if result.retrieval_trace is None:
         result = _with_retrieval_trace(result, retrieval_trace)
     return result
+
+
+def _resolve_documents_for_plan(
+    plan: QueryPlan,
+    structure_reader: KnowledgeBaseStructureReader,
+) -> tuple[tuple[StructuredDocument, ...], bool]:
+    if not plan.needs_structure:
+        return (), False
+
+    scoped_documents = structure_reader.documents_for_scopes(plan.scope_detection.scopes)
+    if scoped_documents:
+        return scoped_documents, False
+
+    if not _should_broaden_document_scope(plan):
+        return (), False
+
+    all_documents = structure_reader.load_documents()
+    if not all_documents:
+        return (), False
+    return all_documents, True
+
+
+def _should_broaden_document_scope(plan: QueryPlan) -> bool:
+    if "general" in plan.scope_detection.scopes:
+        return True
+    if plan.intent == "unknown":
+        return True
+    if plan.scope_detection.source == "default":
+        return True
+
+    threshold = plan.policy_trace.rules_min_confidence
+    if threshold > 0 and plan.scope_detection.confidence < threshold:
+        return True
+    return False
 
 
 def _build_detail_result(
@@ -265,7 +297,7 @@ def _build_detail_result(
     renderer_note = "no_hit_anchored_block"
 
     for index, hit in enumerate(search_response.results):
-        logical_id = _search_hit_logical_id(hit)
+        logical_id = search_hit_logical_id(hit)
         document = documents_by_id.get(logical_id)
         hit_context = _resolve_hit_context(structure_reader, hit)
         block = None
@@ -340,6 +372,30 @@ def _build_safe_fallback_result(
     detail_attempted: bool = False,
     retrieval_trace: QueryRetrievalExecutionTrace | None = None,
 ) -> QueryAnswerResult:
+    if (
+        plan.needs_structure
+        and not documents
+        and not _should_broaden_document_scope(plan)
+        and structure_reader.load_documents()
+    ):
+        fallback_message = NO_RELEVANT_INFO_FALLBACK
+        if search_response is not None and search_response.fallback_message:
+            fallback_message = search_response.fallback_message
+        result = QueryAnswerResult(
+            plan=plan,
+            summary=fallback_message,
+            blocks=(),
+            sources=(),
+            search_response=search_response,
+            fallback_used=True,
+        )
+        return _with_retrieval_trace(
+            result,
+            retrieval_trace,
+            trusted_top_hit=False,
+            note="no_specific_query_evidence_in_hits",
+        )
+
     if detail_result is None and not detail_attempted:
         detail_result = _build_detail_result(
             plan,
@@ -436,7 +492,7 @@ def _build_raw_hit_fallback_result(
     renderer_note = "no_raw_hit_lines"
 
     for hit in search_response.results:
-        logical_id = _search_hit_logical_id(hit)
+        logical_id = search_hit_logical_id(hit)
         hit_context = _resolve_hit_context(structure_reader, hit)
         title = _raw_hit_title(hit, hit_context)
         block_key = (logical_id, title)
@@ -511,7 +567,7 @@ def _log_structure_mapping(
     structure_reader: KnowledgeBaseStructureReader,
 ) -> None:
     for hit in search_response.results:
-        logical_id = _search_hit_logical_id(hit)
+        logical_id = search_hit_logical_id(hit)
         hit_context = _resolve_hit_context(structure_reader, hit)
         logger.debug(
             "%s logical_id=%s scoped_document=%s context_resolved=%s heading_path=%s",
@@ -533,7 +589,7 @@ def _resolve_hit_context(
         logger.debug(
             "%s logical_id=%s resolution_failed=True",
             LOG_EVENT_STRUCTURE_MAPPING,
-            _search_hit_logical_id(hit),
+            search_hit_logical_id(hit),
             exc_info=True,
         )
         return None
@@ -583,11 +639,6 @@ def _raw_hit_title(hit: SearchHit, hit_context: SearchHitDebugContext | None) ->
     if hit_context is not None and hit_context.document_title:
         return hit_context.document_title
     return hit.filename
-
-
-def _search_hit_logical_id(hit: SearchHit) -> str:
-    logical_id = str(hit.attributes.get("logical_id", "")).strip()
-    return logical_id or Path(hit.filename).stem
 
 
 def _retrieval_ranking_tokens(plan: QueryPlan) -> tuple[str, ...]:
@@ -656,7 +707,7 @@ def _search_response_tokens(
     document_tokens: dict[str, set[str]] = {}
     for hit in search_response.results[:5]:
         tokens.update(tokenize_text(f"{hit.filename}\n{hit.text}"))
-        document = documents_by_id.get(_search_hit_logical_id(hit))
+        document = documents_by_id.get(search_hit_logical_id(hit))
         if document is None:
             continue
         cached = document_tokens.get(document.logical_id)

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-AttributeValue = str | float | bool
+AttributeValue = str | int | float | bool
 Attributes = dict[str, AttributeValue]
 NO_RELEVANT_INFO_FALLBACK = "No relevant information found in the knowledge base."
 

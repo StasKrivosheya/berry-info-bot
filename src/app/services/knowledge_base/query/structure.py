@@ -52,7 +52,7 @@ class KnowledgeBaseStructureReader:
             for document in documents
             if "general" in scopes or any(scope in document.scopes for scope in scopes)
         ]
-        return tuple(filtered or documents)
+        return tuple(filtered)
 
     def resolve_hit_context(self, hit: SearchHit) -> SearchHitDebugContext | None:
         documents = self.load_documents()

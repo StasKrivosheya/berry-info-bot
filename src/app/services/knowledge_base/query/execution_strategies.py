@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.services.knowledge_base.query.text import (
     shorten_text,
     strip_leading_markers,
@@ -17,7 +15,8 @@ from app.services.knowledge_base.query.types import (
     StructuredDocument,
     StructuredSection,
 )
-from app.services.knowledge_base.types_openai import SearchHit, SearchResponse
+from app.services.knowledge_base.types_openai import SearchResponse
+from app.services.knowledge_base.utils import dedupe_preserve_order, search_hit_logical_id
 
 PROGRAM_HEADING_EXCLUDES = (
     "види програм",
@@ -177,21 +176,14 @@ def extract_section_items(body: str) -> list[str]:
 def document_support(search_response: SearchResponse) -> dict[str, float]:
     support: dict[str, float] = {}
     for hit in search_response.results:
-        logical_id = _search_hit_logical_id(hit)
+        logical_id = search_hit_logical_id(hit)
         previous = support.get(logical_id, 0.0)
         support[logical_id] = max(previous, hit.score)
     return support
 
 
 def dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    unique: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        unique.append(value)
-    return unique
+    return dedupe_preserve_order(values)
 
 
 def _collect_program_names(
@@ -327,8 +319,3 @@ def _looks_like_program_name(heading: str) -> bool:
     if any(fragment in folded for fragment in PROGRAM_HEADING_EXCLUDES):
         return False
     return bool(tokenize_text(normalized))
-
-
-def _search_hit_logical_id(hit: SearchHit) -> str:
-    logical_id = str(hit.attributes.get("logical_id", "")).strip()
-    return logical_id or Path(hit.filename).stem
