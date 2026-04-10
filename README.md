@@ -45,6 +45,7 @@ Required values:
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL` (must start with `postgresql+asyncpg://`)
 - `ADMIN_USER_IDS`
+- `DEBUG_COMMANDS_MODE=disabled|admins|public` (default: `admins`)
 
 ## Windows commands (recommended)
 
@@ -246,6 +247,7 @@ Environment variables:
 - `KB_QUERY_LLM_TIMEOUT_SECONDS=10`
 - `KB_QUERY_LLM_CACHE_SIZE=128`
 - `KB_QUERY_LLM_MAX_RETRIEVAL_VARIANTS=1`
+- `DEBUG_COMMANDS_MODE=disabled|admins|public`: debug command access policy
 
 Recommended lightweight fallback model: `gpt-5.4-nano`.
 The interpreter uses the Responses API with structured parsing and `reasoning={"effort":"none"}`.
@@ -300,6 +302,10 @@ If no relevant result is found, it returns a service block with fallback status 
 This command is intended for development/testing convenience.
 
 `/vs` remains raw vector-search debug only. It does not use the LLM policy layer.
+Access is controlled by `DEBUG_COMMANDS_MODE`:
+- `disabled`: blocks all debug commands.
+- `admins`: allows only users listed in `ADMIN_USER_IDS` (default).
+- `public`: allows all users.
 
 Additional temporary query-policy debug commands:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.knowledge_base.query.classifier import classify_query_intent
@@ -47,6 +48,37 @@ LOG_EVENT_POLICY_LLM_SKIPPED = "kb_query_policy_llm_skipped"
 LOG_EVENT_POLICY_LLM_FAILED = "kb_query_policy_llm_failed"
 
 
+@dataclass(slots=True)
+class _DeterministicBaseline:
+    classification: QueryClassification
+    scope: QueryScopeDetection
+    strategy: QueryStrategy
+    retrieval_plan: QueryRetrievalPlan
+
+
+@dataclass(slots=True)
+class _LLMResolution:
+    requested_stages: tuple[QueryInterpretationStage, ...]
+    skip_reason: str | None
+    result: QueryInterpretationResult | None
+    cache_hit: bool
+    failure_reason: str | None
+    debug_note: str | None
+
+
+@dataclass(slots=True)
+class _FinalDecisions:
+    classification: QueryClassification
+    scope: QueryScopeDetection
+    strategy: QueryStrategy
+    retrieval_plan: QueryRetrievalPlan
+    intent_source: QueryDecisionSource
+    scope_source: QueryDecisionSource
+    strategy_source: QueryDecisionSource
+    retrieval_source: QueryDecisionSource
+    llm_failure_reason: str | None
+
+
 class KnowledgeBaseQueryPolicy:
     """Rules-first query routing policy with optional structured LLM fallback."""
 
@@ -70,44 +102,146 @@ class KnowledgeBaseQueryPolicy:
         *,
         llm_mode_override: QueryLLMMode | None = None,
     ) -> QueryPlan:
-        normalized_query = normalize_query_text(query)
-        stage_toggles = self._settings.stage_toggles
         llm_mode = llm_mode_override or self._settings.kb_query_llm_mode
+        stage_toggles = self._settings.stage_toggles
 
-        deterministic_classification = (
+        baseline = self._build_deterministic_baseline(
+            query=query,
+            stage_toggles=stage_toggles,
+        )
+        llm_resolution = self._resolve_llm_resolution(
+            query=query,
+            llm_mode=llm_mode,
+            baseline=baseline,
+        )
+        final = self._resolve_final_decisions(
+            query=query,
+            stage_toggles=stage_toggles,
+            baseline=baseline,
+            llm_resolution=llm_resolution,
+        )
+        base_plan = build_query_plan_with_strategy(
+            final.classification,
+            final.scope,
+            final.retrieval_plan,
+            final.strategy,
+        )
+        policy_trace = QueryPolicyTrace(
+            mode=llm_mode,
+            llm_allowed_for=self._settings.kb_query_llm_allowed_for,
+            stage_toggles=stage_toggles,
+            rules_min_confidence=self._settings.kb_query_rules_min_confidence,
+            deterministic_classification=baseline.classification,
+            deterministic_scope_detection=baseline.scope,
+            deterministic_strategy=baseline.strategy,
+            deterministic_retrieval_plan=baseline.retrieval_plan,
+            final_intent_source=final.intent_source,
+            final_scope_source=final.scope_source,
+            final_strategy_source=final.strategy_source,
+            final_retrieval_source=final.retrieval_source,
+            llm_requested=bool(llm_resolution.requested_stages),
+            llm_used=llm_resolution.result is not None,
+            llm_cache_hit=llm_resolution.cache_hit,
+            llm_stages_requested=llm_resolution.requested_stages,
+            llm_skip_reason=llm_resolution.skip_reason,
+            llm_failure_reason=final.llm_failure_reason,
+            llm_debug_note=llm_resolution.debug_note,
+        )
+        rationale = list(base_plan.rationale)
+        rationale.extend(
+            note for note in final.retrieval_plan.rationale if note and note not in rationale
+        )
+        if not stage_toggles.planner_enabled and final.strategy_source == "default":
+            rationale.append("Planner stage is disabled; using safe fallback strategy.")
+
+        plan = QueryPlan(
+            classification=base_plan.classification,
+            scope_detection=base_plan.scope_detection,
+            strategy=base_plan.strategy,
+            retrieval_plan=base_plan.retrieval_plan,
+            needs_retrieval=base_plan.needs_retrieval,
+            needs_structure=base_plan.needs_structure,
+            rationale=tuple(rationale),
+            strategy_source=final.strategy_source,
+            policy_trace=policy_trace,
+        )
+        logger.info(
+            (
+                "%s query=%r mode=%s intent=%s intent_source=%s scope=%s scope_source=%s "
+                "strategy=%s strategy_source=%s retrieval_source=%s llm_requested=%s "
+                "llm_used=%s llm_cache_hit=%s llm_failure_reason=%s"
+            ),
+            LOG_EVENT_POLICY_RESOLVED,
+            query,
+            llm_mode,
+            plan.intent,
+            final.intent_source,
+            plan.scope_detection.primary_scope,
+            final.scope_source,
+            plan.strategy,
+            final.strategy_source,
+            final.retrieval_source,
+            policy_trace.llm_requested,
+            policy_trace.llm_used,
+            policy_trace.llm_cache_hit,
+            policy_trace.llm_failure_reason,
+        )
+        return plan
+
+    def _build_deterministic_baseline(
+        self,
+        *,
+        query: str,
+        stage_toggles,
+    ) -> _DeterministicBaseline:
+        classification = (
             classify_query_intent(query)
             if stage_toggles.rules_enabled
             else _default_classification("Rules stage disabled by configuration.")
         )
-        deterministic_scope = (
+        scope = (
             detect_query_scope(query)
             if stage_toggles.scope_enabled
             else _default_scope("Scope stage disabled by configuration.")
         )
-        deterministic_strategy = (
-            strategy_for_intent(deterministic_classification.intent)
+        strategy = (
+            strategy_for_intent(classification.intent)
             if stage_toggles.planner_enabled
             else "safe_fallback"
         )
-        deterministic_retrieval_plan = build_deterministic_retrieval_plan(
+        retrieval_plan = build_deterministic_retrieval_plan(
             query,
-            deterministic_classification,
-            deterministic_scope,
-            deterministic_strategy,
+            classification,
+            scope,
+            strategy,
+        )
+        return _DeterministicBaseline(
+            classification=classification,
+            scope=scope,
+            strategy=strategy,
+            retrieval_plan=retrieval_plan,
         )
 
+    def _resolve_llm_resolution(
+        self,
+        *,
+        query: str,
+        llm_mode: QueryLLMMode,
+        baseline: _DeterministicBaseline,
+    ) -> _LLMResolution:
+        normalized_query = normalize_query_text(query)
         requested_stages, llm_skip_reason = self._determine_llm_stages(
             mode=llm_mode,
-            deterministic_classification=deterministic_classification,
-            deterministic_scope=deterministic_scope,
-            deterministic_strategy=deterministic_strategy,
-            deterministic_retrieval_plan=deterministic_retrieval_plan,
+            deterministic_classification=baseline.classification,
+            deterministic_scope=baseline.scope,
+            deterministic_strategy=baseline.strategy,
+            deterministic_retrieval_plan=baseline.retrieval_plan,
         )
+
         llm_result = None
         llm_cache_hit = False
         llm_failure_reason = None
         llm_debug_note = None
-
         if requested_stages:
             logger.debug(
                 "%s query=%r stages=%s mode=%s",
@@ -120,19 +254,16 @@ class KnowledgeBaseQueryPolicy:
                 query=query,
                 normalized_query=normalized_query,
                 requested_stages=requested_stages,
-                deterministic_classification=deterministic_classification,
-                deterministic_scope=deterministic_scope,
-                deterministic_strategy=deterministic_strategy,
-                deterministic_retrieval_plan=deterministic_retrieval_plan,
+                deterministic_classification=baseline.classification,
+                deterministic_scope=baseline.scope,
+                deterministic_strategy=baseline.strategy,
+                deterministic_retrieval_plan=baseline.retrieval_plan,
             )
             if llm_result is not None:
-                llm_debug_note = (
-                    llm_result.debug_note
-                    or (
-                        llm_result.retrieval_hints.debug_note
-                        if llm_result.retrieval_hints is not None
-                        else None
-                    )
+                llm_debug_note = llm_result.debug_note or (
+                    llm_result.retrieval_hints.debug_note
+                    if llm_result.retrieval_hints is not None
+                    else None
                 )
         else:
             logger.debug(
@@ -143,18 +274,37 @@ class KnowledgeBaseQueryPolicy:
                 llm_mode,
             )
 
-        final_classification = deterministic_classification
-        final_scope = deterministic_scope
-        final_strategy = (
-            deterministic_strategy if stage_toggles.planner_enabled else "safe_fallback"
+        return _LLMResolution(
+            requested_stages=requested_stages,
+            skip_reason=llm_skip_reason,
+            result=llm_result,
+            cache_hit=llm_cache_hit,
+            failure_reason=llm_failure_reason,
+            debug_note=llm_debug_note,
         )
-        final_retrieval_plan = deterministic_retrieval_plan
-        final_intent_source: QueryDecisionSource = deterministic_classification.source
-        final_scope_source: QueryDecisionSource = deterministic_scope.source
+
+    def _resolve_final_decisions(
+        self,
+        *,
+        query: str,
+        stage_toggles,
+        baseline: _DeterministicBaseline,
+        llm_resolution: _LLMResolution,
+    ) -> _FinalDecisions:
+        llm_result = llm_resolution.result
+        requested_stages = llm_resolution.requested_stages
+        llm_failure_reason = llm_resolution.failure_reason
+
+        final_classification = baseline.classification
+        final_scope = baseline.scope
+        final_strategy = baseline.strategy if stage_toggles.planner_enabled else "safe_fallback"
+        final_retrieval_plan = baseline.retrieval_plan
+        final_intent_source: QueryDecisionSource = baseline.classification.source
+        final_scope_source: QueryDecisionSource = baseline.scope.source
         final_strategy_source: QueryDecisionSource = (
             "rules" if stage_toggles.planner_enabled else "default"
         )
-        final_retrieval_source: QueryDecisionSource = deterministic_retrieval_plan.source
+        final_retrieval_source: QueryDecisionSource = baseline.retrieval_plan.source
 
         if llm_result is not None and "classifier" in requested_stages:
             final_classification = QueryClassification(
@@ -216,73 +366,17 @@ class KnowledgeBaseQueryPolicy:
                 )
                 final_retrieval_source = "llm"
 
-        base_plan = build_query_plan_with_strategy(
-            final_classification,
-            final_scope,
-            final_retrieval_plan,
-            final_strategy,
-        )
-        policy_trace = QueryPolicyTrace(
-            mode=llm_mode,
-            llm_allowed_for=self._settings.kb_query_llm_allowed_for,
-            stage_toggles=stage_toggles,
-            rules_min_confidence=self._settings.kb_query_rules_min_confidence,
-            deterministic_classification=deterministic_classification,
-            deterministic_scope_detection=deterministic_scope,
-            deterministic_strategy=deterministic_strategy,
-            deterministic_retrieval_plan=deterministic_retrieval_plan,
-            final_intent_source=final_intent_source,
-            final_scope_source=final_scope_source,
-            final_strategy_source=final_strategy_source,
-            final_retrieval_source=final_retrieval_source,
-            llm_requested=bool(requested_stages),
-            llm_used=llm_result is not None,
-            llm_cache_hit=llm_cache_hit,
-            llm_stages_requested=requested_stages,
-            llm_skip_reason=llm_skip_reason,
-            llm_failure_reason=llm_failure_reason,
-            llm_debug_note=llm_debug_note,
-        )
-        rationale = list(base_plan.rationale)
-        rationale.extend(
-            note for note in final_retrieval_plan.rationale if note and note not in rationale
-        )
-        if not stage_toggles.planner_enabled and final_strategy_source == "default":
-            rationale.append("Planner stage is disabled; using safe fallback strategy.")
-
-        plan = QueryPlan(
-            classification=base_plan.classification,
-            scope_detection=base_plan.scope_detection,
-            strategy=base_plan.strategy,
-            retrieval_plan=base_plan.retrieval_plan,
-            needs_retrieval=base_plan.needs_retrieval,
-            needs_structure=base_plan.needs_structure,
-            rationale=tuple(rationale),
+        return _FinalDecisions(
+            classification=final_classification,
+            scope=final_scope,
+            strategy=final_strategy,
+            retrieval_plan=final_retrieval_plan,
+            intent_source=final_intent_source,
+            scope_source=final_scope_source,
             strategy_source=final_strategy_source,
-            policy_trace=policy_trace,
+            retrieval_source=final_retrieval_source,
+            llm_failure_reason=llm_failure_reason,
         )
-        logger.info(
-            (
-                "%s query=%r mode=%s intent=%s intent_source=%s scope=%s scope_source=%s "
-                "strategy=%s strategy_source=%s retrieval_source=%s llm_requested=%s "
-                "llm_used=%s llm_cache_hit=%s llm_failure_reason=%s"
-            ),
-            LOG_EVENT_POLICY_RESOLVED,
-            query,
-            llm_mode,
-            plan.intent,
-            final_intent_source,
-            plan.scope_detection.primary_scope,
-            final_scope_source,
-            plan.strategy,
-            final_strategy_source,
-            final_retrieval_source,
-            policy_trace.llm_requested,
-            policy_trace.llm_used,
-            policy_trace.llm_cache_hit,
-            policy_trace.llm_failure_reason,
-        )
-        return plan
 
     def _determine_llm_stages(
         self,

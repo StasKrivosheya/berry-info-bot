@@ -78,6 +78,8 @@ def render_outline_sheet(
     blocks: list[OutlineBlock] = []
     document_title = normalize_cell_text(default_title) or "Untitled Knowledge Base"
     has_title = False
+    forced_header_rows = set(override.forced_header_rows)
+    forced_paragraph_rows = set(override.forced_paragraph_rows)
 
     candidates = _build_candidates(selected_rows)
     first_row_index = candidates[0].row_index
@@ -87,7 +89,8 @@ def render_outline_sheet(
             candidate=candidate,
             first_row_index=first_row_index,
             has_title=has_title,
-            override=override,
+            forced_header_rows=forced_header_rows,
+            forced_paragraph_rows=forced_paragraph_rows,
         )
         diagnostics.extend(row_diagnostics)
         if classification is None:
@@ -142,16 +145,17 @@ def _classify_candidate(
     candidate: OutlineCandidate,
     first_row_index: int,
     has_title: bool,
-    override: SourceOverride,
+    forced_header_rows: set[int],
+    forced_paragraph_rows: set[int],
 ) -> tuple[OutlineBlock | None, list[ParseDiagnostic]]:
     text = candidate.text
     if not text:
         return None, []
 
-    if candidate.row_index in set(override.forced_paragraph_rows):
+    if candidate.row_index in forced_paragraph_rows:
         return OutlineBlock(kind="paragraph", text=text), []
 
-    force_header = candidate.row_index in set(override.forced_header_rows)
+    force_header = candidate.row_index in forced_header_rows
     if force_header:
         kind = (
             "title"

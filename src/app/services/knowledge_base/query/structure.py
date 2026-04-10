@@ -35,7 +35,10 @@ class KnowledgeBaseStructureReader:
         return self._manifest_path
 
     def load_documents(self) -> tuple[StructuredDocument, ...]:
-        return _load_documents_cached(self._manifest_path)
+        return _load_documents_cached(
+            self._manifest_path,
+            _manifest_cache_key(self._manifest_path),
+        )
 
     def documents_for_scopes(
         self,
@@ -49,7 +52,7 @@ class KnowledgeBaseStructureReader:
             for document in documents
             if "general" in scopes or any(scope in document.scopes for scope in scopes)
         ]
-        return tuple(filtered or documents)
+        return tuple(filtered)
 
     def resolve_hit_context(self, hit: SearchHit) -> SearchHitDebugContext | None:
         documents = self.load_documents()
@@ -79,8 +82,12 @@ class KnowledgeBaseStructureReader:
         )
 
 
-@lru_cache(maxsize=4)
-def _load_documents_cached(manifest_path: Path) -> tuple[StructuredDocument, ...]:
+@lru_cache(maxsize=8)
+def _load_documents_cached(
+    manifest_path: Path,
+    cache_key: tuple[int, int] | None,
+) -> tuple[StructuredDocument, ...]:
+    del cache_key
     if not manifest_path.exists():
         return ()
 
@@ -122,6 +129,14 @@ def _load_documents_cached(manifest_path: Path) -> tuple[StructuredDocument, ...
         len(documents),
     )
     return tuple(documents)
+
+
+def _manifest_cache_key(manifest_path: Path) -> tuple[int, int] | None:
+    try:
+        stat = manifest_path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 def _parse_outline(markdown: str) -> tuple[str, list[StructuredSection]]:

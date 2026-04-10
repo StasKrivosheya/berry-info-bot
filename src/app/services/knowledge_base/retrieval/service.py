@@ -27,12 +27,14 @@ from app.services.knowledge_base.retrieval.search_policy import (
 from app.services.knowledge_base.retrieval.vector_store import KnowledgeBaseVectorStoreClient
 from app.services.knowledge_base.types_openai import (
     Attributes,
+    ManifestSyncItem,
     SearchHit,
     SearchResponse,
     SyncFailure,
     SyncReport,
     VectorStoreFileRecord,
 )
+from app.services.knowledge_base.utils import attribute_as_str, search_hit_logical_id
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +146,17 @@ class KnowledgeBaseRetrievalService:
 
         existing_files = self.list_vector_store_files() if replace else []
         if replace and existing_files:
+            filtered_sync = only_logical_id is not None or only_category is not None
+            selected_logical_ids = (
+                {item.logical_id for item in plan.selected_items}
+                if filtered_sync
+                else None
+            )
             stale_records = _collect_stale_workbook_records(
                 existing_files=existing_files,
                 items=plan.selected_items,
                 blocked_workbooks=manifest_error_workbooks,
+                selected_logical_ids=selected_logical_ids,
             )
             if stale_records:
                 delete_report = self._vector_store_client.delete_file_records(
@@ -181,7 +190,6 @@ class KnowledgeBaseRetrievalService:
                             message=str(exc),
                         )
                     )
-                    report.skipped_count += len(grouped_items)
                     continue
 
                 report.deleted_count += delete_report.deleted_count
@@ -189,7 +197,7 @@ class KnowledgeBaseRetrievalService:
                 existing_files = [
                     record
                     for record in existing_files
-                    if record.attributes.get("logical_id") != logical_id
+                    if attribute_as_str(record.attributes.get("logical_id")) != logical_id
                 ]
 
             for item in grouped_items:
@@ -234,12 +242,12 @@ class KnowledgeBaseRetrievalService:
         logical_id: str | None = None,
         attribute_filters: Attributes | None = None,
     ) -> SearchResponse:
-        resolved_max_results = _clamp_max_results(
+        resolved_max_results = clamp_search_max_results(
             max_num_results
             if max_num_results is not None
             else self._settings.openai_kb_search_max_results
         )
-        resolved_threshold = _clamp_score_threshold(
+        resolved_threshold = clamp_score_threshold(
             score_threshold
             if score_threshold is not None
             else self._settings.openai_kb_score_threshold
@@ -300,26 +308,23 @@ class KnowledgeBaseRetrievalService:
         return result
 
 
-def _clamp_max_results(value: int) -> int:
-    return clamp_search_max_results(value)
-
-
-def _clamp_score_threshold(value: float) -> float:
-    return clamp_score_threshold(value)
-
-
 def _collect_stale_workbook_records(
     *,
     existing_files: list[VectorStoreFileRecord],
-    items,
+    items: list[ManifestSyncItem],
     blocked_workbooks: set[str],
+    selected_logical_ids: set[str] | None,
 ) -> list[VectorStoreFileRecord]:
     workbook_state = _build_workbook_state(items)
     stale_records: list[VectorStoreFileRecord] = []
     seen_file_ids: set[str] = set()
 
     for record in existing_files:
-        workbook_file = _attribute_as_str(record.attributes.get("workbook_file"))
+        record_logical_id = attribute_as_str(record.attributes.get("logical_id"))
+        if selected_logical_ids is not None and record_logical_id not in selected_logical_ids:
+            continue
+
+        workbook_file = attribute_as_str(record.attributes.get("workbook_file"))
         if not workbook_file or workbook_file in blocked_workbooks:
             continue
 
@@ -336,7 +341,7 @@ def _collect_stale_workbook_records(
     return stale_records
 
 
-def _build_workbook_state(items) -> dict[str, dict[str, object]]:
+def _build_workbook_state(items: list[ManifestSyncItem]) -> dict[str, dict[str, object]]:
     workbook_state: dict[str, dict[str, object]] = {}
     for item in items:
         if item.source_format != "xlsx" or not item.workbook_file:
@@ -364,8 +369,11 @@ def _build_workbook_state(items) -> dict[str, dict[str, object]]:
         if item.sheet_index is not None:
             sheet_indexes = state["sheet_indexes"]
             if isinstance(sheet_indexes, dict):
-                allowed_ids = sheet_indexes.setdefault(str(item.sheet_index), set())
-                if isinstance(allowed_ids, set):
+                sheet_index_key = _sheet_index_key(item.sheet_index)
+                if sheet_index_key is None:
+                    continue
+                allowed_ids = sheet_indexes.setdefault(sheet_index_key, set())
+                if isinstance(allowed_ids, set):  # pragma: no branch
                     allowed_ids.add(item.logical_id)
 
     return workbook_state
@@ -375,9 +383,9 @@ def _is_stale_workbook_record(
     record: VectorStoreFileRecord,
     state: dict[str, object],
 ) -> bool:
-    record_logical_id = _attribute_as_str(record.attributes.get("logical_id"))
-    record_sheet_index = _attribute_as_str(record.attributes.get("sheet_index"))
-    record_sheet_name = _attribute_as_str(record.attributes.get("sheet_name"))
+    record_logical_id = attribute_as_str(record.attributes.get("logical_id"))
+    record_sheet_index = _sheet_index_key(record.attributes.get("sheet_index"))
+    record_sheet_name = attribute_as_str(record.attributes.get("sheet_name"))
 
     sheet_indexes = state.get("sheet_indexes", {})
     if isinstance(sheet_indexes, dict) and record_sheet_index:
@@ -399,11 +407,17 @@ def _is_stale_workbook_record(
     return False
 
 
-def _attribute_as_str(value: object) -> str | None:
-    if value is None:
+def _sheet_index_key(value: object) -> str | None:
+    normalized = attribute_as_str(value)
+    if normalized is None:
         return None
-    normalized = str(value).strip()
-    return normalized or None
+    try:
+        numeric = float(normalized)
+    except ValueError:
+        return normalized
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:g}"
 
 
 def _log_search_filtering(
@@ -454,17 +468,10 @@ def _log_search_filtering(
             "%s reason=%s logical_id=%s file=%s score=%s threshold=%s",
             LOG_EVENT_SEARCH_REJECTED_HIT,
             reason,
-            _search_hit_logical_id(hit),
+            search_hit_logical_id(hit),
             hit.filename,
             hit.score,
             threshold,
         )
-
-
-def _search_hit_logical_id(hit: SearchHit) -> str:
-    logical_id = _attribute_as_str(hit.attributes.get("logical_id"))
-    if logical_id:
-        return logical_id
-    return Path(hit.filename).stem
 
 

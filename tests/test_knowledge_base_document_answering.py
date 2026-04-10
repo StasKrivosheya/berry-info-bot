@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.services.knowledge_base.query.classifier import classify_query_intent
 from app.services.knowledge_base.query.config import KnowledgeBaseQuerySettings
+from app.services.knowledge_base.query.execution import execute_query_plan
 from app.services.knowledge_base.query.llm import (
     QueryInterpretationRequest,
     QueryInterpretationResult,
@@ -17,7 +18,16 @@ from app.services.knowledge_base.query.renderer import render_query_answer
 from app.services.knowledge_base.query.retrieval_planner import build_deterministic_retrieval_plan
 from app.services.knowledge_base.query.scope import detect_query_scope
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
-from app.services.knowledge_base.query.types import QueryRetrievalHints
+from app.services.knowledge_base.query.types import (
+    QueryClassification,
+    QueryPlan,
+    QueryPolicyTrace,
+    QueryRetrievalHints,
+    QueryRetrievalPlan,
+    QueryScopeDetection,
+    StructuredDocument,
+    StructuredSection,
+)
 from app.services.knowledge_base.types_openai import (
     NO_RELEVANT_INFO_FALLBACK,
     SearchHit,
@@ -54,6 +64,24 @@ class FakeLLMInterpreter:
     def interpret(self, request: QueryInterpretationRequest) -> QueryInterpretationResult:
         self.calls.append(request)
         return self.result
+
+
+class StaticStructureReader:
+    def __init__(
+        self,
+        *,
+        scoped_documents: tuple[StructuredDocument, ...],
+        all_documents: tuple[StructuredDocument, ...],
+    ) -> None:
+        self.scoped_documents = scoped_documents
+        self.all_documents = all_documents
+        self.manifest_path = Path("test-manifest.json")
+
+    def documents_for_scopes(self, scopes: tuple[str, ...]) -> tuple[StructuredDocument, ...]:
+        return self.scoped_documents
+
+    def load_documents(self) -> tuple[StructuredDocument, ...]:
+        return self.all_documents
 
 
 def _disabled_settings() -> KnowledgeBaseQuerySettings:
@@ -943,3 +971,103 @@ def test_pipeline_stops_after_primary_when_retrieval_is_strong(tmp_path: Path) -
     ]
     assert result.retrieval_trace is not None
     assert result.retrieval_trace.stop_reason == "primary_top_score_sufficient"
+
+
+def test_execute_query_plan_broadens_scope_for_low_confidence_scope_detection() -> None:
+    document = StructuredDocument(
+        logical_id="services",
+        title="Services",
+        category="services",
+        source_file="kb.xlsx",
+        markdown_path=Path("services.md"),
+        scopes=("services",),
+        sections=(
+            StructuredSection(
+                heading="Додаткові послуги",
+                level=2,
+                heading_path=("Services", "Додаткові послуги"),
+                body="- Альтанки\n- Кафе та бар",
+            ),
+        ),
+    )
+    reader = StaticStructureReader(scoped_documents=(), all_documents=(document,))
+    plan = QueryPlan(
+        classification=QueryClassification(
+            intent="overview",
+            confidence=0.92,
+            source="rules",
+        ),
+        scope_detection=QueryScopeDetection(
+            primary_scope="services",
+            scopes=("services",),
+            confidence=0.2,
+            source="rules",
+        ),
+        strategy="overview_summary",
+        retrieval_plan=QueryRetrievalPlan(primary_query="що у вас є"),
+        needs_retrieval=False,
+        needs_structure=True,
+        strategy_source="rules",
+        policy_trace=QueryPolicyTrace(rules_min_confidence=0.85),
+    )
+
+    result = execute_query_plan(
+        "Що у вас є?",
+        plan,
+        structure_reader=reader,
+        search_response=None,
+    )
+
+    assert result.fallback_used is False
+    assert result.blocks
+    assert "Додаткові послуги" in render_query_answer(result)
+
+
+def test_execute_query_plan_keeps_scope_strict_when_confidence_is_high() -> None:
+    document = StructuredDocument(
+        logical_id="services",
+        title="Services",
+        category="services",
+        source_file="kb.xlsx",
+        markdown_path=Path("services.md"),
+        scopes=("services",),
+        sections=(
+            StructuredSection(
+                heading="Додаткові послуги",
+                level=2,
+                heading_path=("Services", "Додаткові послуги"),
+                body="- Альтанки\n- Кафе та бар",
+            ),
+        ),
+    )
+    reader = StaticStructureReader(scoped_documents=(), all_documents=(document,))
+    plan = QueryPlan(
+        classification=QueryClassification(
+            intent="overview",
+            confidence=0.92,
+            source="rules",
+        ),
+        scope_detection=QueryScopeDetection(
+            primary_scope="services",
+            scopes=("services",),
+            confidence=0.95,
+            source="rules",
+        ),
+        strategy="overview_summary",
+        retrieval_plan=QueryRetrievalPlan(primary_query="що у вас є"),
+        needs_retrieval=False,
+        needs_structure=True,
+        strategy_source="rules",
+        policy_trace=QueryPolicyTrace(rules_min_confidence=0.85),
+    )
+
+    result = execute_query_plan(
+        "Що у вас є?",
+        plan,
+        structure_reader=reader,
+        search_response=None,
+    )
+
+    assert result.fallback_used is True
+    assert result.blocks == ()
+    assert result.summary == NO_RELEVANT_INFO_FALLBACK

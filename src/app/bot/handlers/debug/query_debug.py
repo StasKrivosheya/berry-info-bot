@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
+from typing import Literal
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
@@ -14,6 +16,7 @@ from app.bot.handlers.debug.vector_search_debug import (
     format_search_messages,
     split_for_telegram,
 )
+from app.core.constants import DEFAULT_DEBUG_COMMANDS_MODE
 from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
 from app.services.knowledge_base.query.renderer import render_query_answer
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
@@ -42,16 +45,23 @@ QDEBUG_ERROR_TEXT = "Query debug tooling is temporarily unavailable. Please try 
 
 LOG_EVENT_BOT_VS_SEARCH_FAILED = "bot_vs_search_failed"
 LOG_EVENT_BOT_QDEBUG_FAILED = "bot_qdebug_failed"
+LOG_EVENT_BOT_DEBUG_ACCESS_BLOCKED = "bot_debug_access_blocked"
+QDEBUG_DISABLED_TEXT = "Debug commands are disabled in this environment."
+QDEBUG_ADMIN_ONLY_TEXT = "Debug commands are restricted to bot admins."
+DebugCommandsMode = Literal["disabled", "admins", "public"]
 
 
+@lru_cache(maxsize=1)
 def _create_retrieval_service() -> KnowledgeBaseRetrievalService:
     return KnowledgeBaseRetrievalService()
 
 
+@lru_cache(maxsize=1)
 def _create_structure_reader() -> KnowledgeBaseStructureReader:
     return KnowledgeBaseStructureReader()
 
 
+@lru_cache(maxsize=1)
 def _create_query_pipeline() -> KnowledgeBaseQueryPipeline:
     return KnowledgeBaseQueryPipeline(
         structure_reader=_create_structure_reader(),
@@ -59,10 +69,36 @@ def _create_query_pipeline() -> KnowledgeBaseQueryPipeline:
 
 
 @router.message(Command(VS_COMMAND_NAME))
-async def vector_search_handler(message: Message, command: CommandObject) -> None:
+async def vector_search_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Run raw vector search in-chat for development and QA checks."""
 
     if message.from_user is None:
+        return
+
+    access_error = _resolve_debug_access_error(
+        user_id=message.from_user.id,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
+    )
+    if access_error is not None:
+        logger.info(
+            "%s command=%s user_id=%s mode=%s reason=%s",
+            LOG_EVENT_BOT_DEBUG_ACCESS_BLOCKED,
+            VS_COMMAND_NAME,
+            message.from_user.id,
+            _normalize_debug_commands_mode(debug_commands_mode),
+            access_error,
+        )
+        await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=_debug_access_message(access_error),
+            parse_mode=None,
+        )
         return
 
     query = extract_query_text(command)
@@ -80,7 +116,10 @@ async def vector_search_handler(message: Message, command: CommandObject) -> Non
             query=query,
             rewrite_query=False,
         )
-        hit_contexts = _resolve_hit_contexts(response.results)
+        hit_contexts = _resolve_hit_contexts(
+            response.results,
+            structure_reader=_create_structure_reader(),
+        )
         result_messages = format_search_messages(
             query,
             response,
@@ -99,12 +138,20 @@ async def vector_search_handler(message: Message, command: CommandObject) -> Non
 
 
 @router.message(Command(QCLASS_COMMAND_NAME))
-async def query_classification_handler(message: Message, command: CommandObject) -> None:
+async def query_classification_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Temporary debug command: show query classification with policy metadata."""
 
     await _handle_query_debug(
         message,
         command,
+        command_name=QCLASS_COMMAND_NAME,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
         usage_text=QCLASS_USAGE_TEXT,
         render_fn=lambda query: _render_classification_debug(
             query,
@@ -114,12 +161,20 @@ async def query_classification_handler(message: Message, command: CommandObject)
 
 
 @router.message(Command(QPLAN_COMMAND_NAME))
-async def query_plan_handler(message: Message, command: CommandObject) -> None:
+async def query_plan_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Temporary debug command: show query plan, policy mode, and routing trace."""
 
     await _handle_query_debug(
         message,
         command,
+        command_name=QPLAN_COMMAND_NAME,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
         usage_text=QPLAN_USAGE_TEXT,
         render_fn=lambda query: _render_plan_debug(
             query,
@@ -129,12 +184,20 @@ async def query_plan_handler(message: Message, command: CommandObject) -> None:
 
 
 @router.message(Command(QROUTE_COMMAND_NAME))
-async def query_route_handler(message: Message, command: CommandObject) -> None:
+async def query_route_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Temporary debug command: render policy routing decisions only."""
 
     await _handle_query_debug(
         message,
         command,
+        command_name=QROUTE_COMMAND_NAME,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
         usage_text=QROUTE_USAGE_TEXT,
         render_fn=lambda query: _render_policy_debug(
             query,
@@ -144,12 +207,20 @@ async def query_route_handler(message: Message, command: CommandObject) -> None:
 
 
 @router.message(Command(QANSWER_COMMAND_NAME))
-async def query_answer_handler(message: Message, command: CommandObject) -> None:
+async def query_answer_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Temporary debug command: run the reusable rules-first answer pipeline."""
 
     await _handle_query_debug(
         message,
         command,
+        command_name=QANSWER_COMMAND_NAME,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
         usage_text=QANSWER_USAGE_TEXT,
         render_fn=lambda query: _render_answer_debug(
             query,
@@ -159,12 +230,20 @@ async def query_answer_handler(message: Message, command: CommandObject) -> None
 
 
 @router.message(Command(QRETRIEVE_COMMAND_NAME))
-async def query_retrieval_handler(message: Message, command: CommandObject) -> None:
+async def query_retrieval_handler(
+    message: Message,
+    command: CommandObject,
+    admin_user_ids: set[int] | None = None,
+    debug_commands_mode: str | None = None,
+) -> None:
     """Temporary debug command: inspect retrieval planning and execution."""
 
     await _handle_query_debug(
         message,
         command,
+        command_name=QRETRIEVE_COMMAND_NAME,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
         usage_text=QRETRIEVE_USAGE_TEXT,
         render_fn=lambda query: _render_retrieval_debug(
             query,
@@ -177,10 +256,34 @@ async def _handle_query_debug(
     message: Message,
     command: CommandObject,
     *,
+    command_name: str,
+    admin_user_ids: set[int] | None,
+    debug_commands_mode: str | None,
     usage_text: str,
     render_fn,
 ) -> None:
     if message.from_user is None:
+        return
+
+    access_error = _resolve_debug_access_error(
+        user_id=message.from_user.id,
+        admin_user_ids=admin_user_ids,
+        debug_commands_mode=debug_commands_mode,
+    )
+    if access_error is not None:
+        logger.info(
+            "%s command=%s user_id=%s mode=%s reason=%s",
+            LOG_EVENT_BOT_DEBUG_ACCESS_BLOCKED,
+            command_name,
+            message.from_user.id,
+            _normalize_debug_commands_mode(debug_commands_mode),
+            access_error,
+        )
+        await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=_debug_access_message(access_error),
+            parse_mode=None,
+        )
         return
 
     query = extract_query_text(command)
@@ -206,13 +309,43 @@ async def _handle_query_debug(
     await _send_rendered_messages(message, [rendered_message])
 
 
-def _resolve_hit_contexts(results) -> list:
+def _resolve_hit_contexts(results, *, structure_reader: KnowledgeBaseStructureReader) -> list:
     try:
-        structure_reader = _create_structure_reader()
         return [structure_reader.resolve_hit_context(hit) for hit in results]
     except Exception:
         logger.debug("kb_debug_hit_context_resolution_failed", exc_info=True)
         return [None for _ in results]
+
+
+def _resolve_debug_access_error(
+    *,
+    user_id: int,
+    admin_user_ids: set[int] | None,
+    debug_commands_mode: str | None,
+) -> str | None:
+    mode = _normalize_debug_commands_mode(debug_commands_mode)
+    if mode == "public":
+        return None
+    if mode == "disabled":
+        return "disabled"
+
+    admin_ids = admin_user_ids or set()
+    if user_id in admin_ids:
+        return None
+    return "admin_only"
+
+
+def _normalize_debug_commands_mode(value: str | None) -> DebugCommandsMode:
+    normalized = str(value or DEFAULT_DEBUG_COMMANDS_MODE).strip().casefold()
+    if normalized in {"disabled", "admins", "public"}:
+        return normalized  # type: ignore[return-value]
+    return DEFAULT_DEBUG_COMMANDS_MODE  # type: ignore[return-value]
+
+
+def _debug_access_message(access_error: str) -> str:
+    if access_error == "disabled":
+        return QDEBUG_DISABLED_TEXT
+    return QDEBUG_ADMIN_ONLY_TEXT
 
 
 async def _send_rendered_messages(message: Message, rendered_messages: list[str]) -> None:

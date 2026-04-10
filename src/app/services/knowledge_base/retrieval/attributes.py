@@ -15,11 +15,8 @@ def normalize_attributes(raw_attributes: object) -> Attributes:
     for key, value in raw_attributes.items():
         if not isinstance(key, str):
             continue
-        if isinstance(value, (str, float, bool)):
+        if isinstance(value, (str, int, float, bool)):
             normalized[key] = value
-            continue
-        if isinstance(value, int):
-            normalized[key] = float(value)
     return normalized
 
 
