@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from app.bot.middlewares.tracing import TraceContextMiddleware
 from app.core.logging import JsonLogFormatter
 from app.observability import (
+    LOG_EVENT_TRACE_REQUEST_FINISHED,
+    LOG_EVENT_TRACE_REQUEST_STARTED,
     LOG_EVENT_TRACE_SPAN,
     get_trace_id,
     reset_trace_id,
@@ -136,6 +138,50 @@ def test_trace_context_middleware_reuses_x_request_id() -> None:
     assert result == "handled"
     assert handler.observed_trace_id == "req-123"
     assert get_trace_id() is None
+
+
+def test_trace_context_middleware_logs_user_and_chat_metadata() -> None:
+    middleware = TraceContextMiddleware()
+    handler = FakeTraceAwareHandler()
+    stream = io.StringIO()
+    log_handler = logging.StreamHandler(stream)
+    log_handler.setFormatter(JsonLogFormatter())
+    middleware_logger = logging.getLogger("app.bot.middlewares.tracing")
+    previous_level = middleware_logger.level
+    previous_propagate = middleware_logger.propagate
+    middleware_logger.handlers.clear()
+    middleware_logger.addHandler(log_handler)
+    middleware_logger.setLevel(logging.INFO)
+    middleware_logger.propagate = False
+
+    event = SimpleNamespace(
+        update_id=777,
+        from_user=SimpleNamespace(id=1001),
+        chat=SimpleNamespace(id=2002),
+    )
+    try:
+        result = asyncio.run(middleware(handler, event, {}))
+    finally:
+        middleware_logger.removeHandler(log_handler)
+        middleware_logger.setLevel(previous_level)
+        middleware_logger.propagate = previous_propagate
+
+    assert result == "handled"
+    log_lines = [
+        json.loads(line)
+        for line in stream.getvalue().splitlines()
+        if line.strip()
+    ]
+    request_logs = [
+        line
+        for line in log_lines
+        if line.get("event") in {LOG_EVENT_TRACE_REQUEST_STARTED, LOG_EVENT_TRACE_REQUEST_FINISHED}
+    ]
+
+    assert len(request_logs) == 2
+    assert all(line["meta"]["user_id"] == 1001 for line in request_logs)
+    assert all(line["meta"]["chat_id"] == 2002 for line in request_logs)
+    assert all(line["meta"]["update_id"] == 777 for line in request_logs)
 
 
 def test_pipeline_smoke_logs_trace_id_and_stage_spans() -> None:
