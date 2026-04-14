@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+from app.bot.middlewares import TraceContextMiddleware
 from app.bot.routers import build_root_router
 
 DISPATCHER_CONTEXT_ADMIN_USER_IDS = "admin_user_ids"
@@ -30,5 +31,6 @@ def create_dispatcher(
     dispatcher = Dispatcher()
     dispatcher[DISPATCHER_CONTEXT_ADMIN_USER_IDS] = set(admin_user_ids)
     dispatcher[DISPATCHER_CONTEXT_DEBUG_COMMANDS_MODE] = debug_commands_mode
+    dispatcher.update.outer_middleware(TraceContextMiddleware())
     dispatcher.include_router(build_root_router())
     return dispatcher
