@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from app.observability import emit_skipped_span, trace_stage
 from app.services.knowledge_base.query.execution import execute_query_plan
 from app.services.knowledge_base.query.policy import KnowledgeBaseQueryPolicy
 from app.services.knowledge_base.query.retrieval_execution import execute_retrieval_plan
@@ -64,11 +65,18 @@ class KnowledgeBaseQueryPipeline:
         attribute_filters=None,
     ) -> QueryAnswerResult:
         runtime_mode = self._query_policy.settings.kb_query_llm_mode
-        plan = (
-            self._query_policy.resolve_query_plan(query)
-            if runtime_mode == "forced"
-            else self._resolve_initial_plan(query)
-        )
+        with trace_stage(
+            "plan",
+            meta={
+                "phase": "initial",
+                "runtime_mode": runtime_mode,
+            },
+        ):
+            plan = (
+                self._query_policy.resolve_query_plan(query)
+                if runtime_mode == "forced"
+                else self._resolve_initial_plan(query)
+            )
         logger.debug(
             (
                 "%s query=%r normalized_query=%r intent=%s scope=%s strategy=%s "
@@ -118,10 +126,17 @@ class KnowledgeBaseQueryPipeline:
             self._log_pipeline_result(deterministic_result)
             return deterministic_result
 
-        llm_plan = self._query_policy.resolve_query_plan(
-            query,
-            llm_mode_override=runtime_mode,
-        )
+        with trace_stage(
+            "plan",
+            meta={
+                "phase": "llm_escalation",
+                "runtime_mode": runtime_mode,
+            },
+        ):
+            llm_plan = self._query_policy.resolve_query_plan(
+                query,
+                llm_mode_override=runtime_mode,
+            )
         final_result = deterministic_result
         retry_result: QueryAnswerResult | None = None
         if self._should_retry_retrieval(plan, llm_plan):
@@ -179,17 +194,25 @@ class KnowledgeBaseQueryPipeline:
         search_response = None
         retrieval_trace = None
         if stage_toggles.retrieval_enabled and plan.needs_retrieval:
-            search_response, retrieval_trace = execute_retrieval_plan(
-                self._get_retriever(),
-                plan.retrieval_plan,
-                max_num_results=max_num_results,
-                rewrite_query=rewrite_query,
-                score_threshold=score_threshold,
-                category=category,
-                logical_id=logical_id,
-                attribute_filters=attribute_filters,
-                max_alternate_queries=max_alternate_queries,
-            )
+            with trace_stage(
+                "retrieval",
+                meta=_stage_meta(
+                    plan,
+                    phase="primary",
+                    max_alternate_queries=max_alternate_queries,
+                ),
+            ):
+                search_response, retrieval_trace = execute_retrieval_plan(
+                    self._get_retriever(),
+                    plan.retrieval_plan,
+                    max_num_results=max_num_results,
+                    rewrite_query=rewrite_query,
+                    score_threshold=score_threshold,
+                    category=category,
+                    logical_id=logical_id,
+                    attribute_filters=attribute_filters,
+                    max_alternate_queries=max_alternate_queries,
+                )
             retrieval_trace = QueryRetrievalExecutionTrace(
                 initial_planned_queries=retrieval_trace.planned_queries,
                 initial_executed_queries=retrieval_trace.executed_queries,
@@ -204,9 +227,34 @@ class KnowledgeBaseQueryPipeline:
                 stop_reason=retrieval_trace.stop_reason,
             )
         elif plan.needs_retrieval:
+            emit_skipped_span(
+                "retrieval",
+                meta=_stage_meta(
+                    plan,
+                    phase="primary",
+                    reason="retrieval_disabled_by_configuration",
+                ),
+            )
             retrieval_trace = plan_retrieval_disabled_trace(plan)
+        else:
+            emit_skipped_span(
+                "retrieval",
+                meta=_stage_meta(
+                    plan,
+                    phase="primary",
+                    reason="retrieval_not_required",
+                ),
+            )
 
         if not stage_toggles.renderer_enabled:
+            emit_skipped_span(
+                "render",
+                meta=_stage_meta(
+                    plan,
+                    phase="primary",
+                    reason="renderer_disabled_by_configuration",
+                ),
+            )
             return QueryAnswerResult(
                 plan=plan,
                 summary="Renderer stage is disabled by configuration.",
@@ -217,13 +265,20 @@ class KnowledgeBaseQueryPipeline:
                 retrieval_trace=retrieval_trace,
             )
 
-        return execute_query_plan(
-            query,
-            plan,
-            structure_reader=self._structure_reader,
-            search_response=search_response,
-            retrieval_trace=retrieval_trace,
-        )
+        with trace_stage(
+            "render",
+            meta=_stage_meta(
+                plan,
+                phase="primary",
+            ),
+        ):
+            return execute_query_plan(
+                query,
+                plan,
+                structure_reader=self._structure_reader,
+                search_response=search_response,
+                retrieval_trace=retrieval_trace,
+            )
 
     def _render_with_existing_search_response(
         self,
@@ -232,6 +287,14 @@ class KnowledgeBaseQueryPipeline:
         base_result: QueryAnswerResult,
     ) -> QueryAnswerResult:
         if not plan.policy_trace.stage_toggles.renderer_enabled:
+            emit_skipped_span(
+                "render",
+                meta=_stage_meta(
+                    plan,
+                    phase="reuse_search_response",
+                    reason="renderer_disabled_by_configuration",
+                ),
+            )
             return QueryAnswerResult(
                 plan=plan,
                 summary="Renderer stage is disabled by configuration.",
@@ -241,13 +304,20 @@ class KnowledgeBaseQueryPipeline:
                 fallback_used=True,
                 retrieval_trace=base_result.retrieval_trace,
             )
-        return execute_query_plan(
-            query,
-            plan,
-            structure_reader=self._structure_reader,
-            search_response=base_result.search_response,
-            retrieval_trace=base_result.retrieval_trace,
-        )
+        with trace_stage(
+            "render",
+            meta=_stage_meta(
+                plan,
+                phase="reuse_search_response",
+            ),
+        ):
+            return execute_query_plan(
+                query,
+                plan,
+                structure_reader=self._structure_reader,
+                search_response=base_result.search_response,
+                retrieval_trace=base_result.retrieval_trace,
+            )
 
     def _determine_escalation_reason(
         self,
@@ -380,3 +450,24 @@ def plan_retrieval_disabled_trace(plan: QueryPlan) -> QueryRetrievalExecutionTra
         merged_result_count=0,
         stop_reason="retrieval_disabled_by_configuration",
     )
+
+
+def _stage_meta(
+    plan: QueryPlan,
+    *,
+    phase: str,
+    reason: str | None = None,
+    max_alternate_queries: int | None = None,
+) -> dict[str, object]:
+    meta: dict[str, object] = {
+        "phase": phase,
+        "intent": plan.intent,
+        "scope": plan.scope_detection.primary_scope,
+        "strategy": plan.strategy,
+        "retrieval_source": plan.retrieval_plan.source,
+    }
+    if max_alternate_queries is not None:
+        meta["max_alternate_queries"] = max_alternate_queries
+    if reason is not None:
+        meta["reason"] = reason
+    return meta
