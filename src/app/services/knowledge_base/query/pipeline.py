@@ -1,8 +1,27 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from app.observability import emit_skipped_span, trace_stage
+from app.services.knowledge_base.query.dto import (
+    AnswerResult,
+    EvidencePacket,
+    LexicalHit,
+    NormalizedQuery,
+    RewriteResult,
+    RouterDecision,
+    VectorHit,
+)
+from app.services.knowledge_base.query.dto_adapters import (
+    answer_result_from_query_answer_result,
+    build_evidence_packet,
+    build_normalized_query,
+    lexical_hits_stub,
+    rewrite_result_from_plan,
+    router_decision_from_plan,
+    vector_hits_from_search_response,
+)
 from app.services.knowledge_base.query.execution import execute_query_plan
 from app.services.knowledge_base.query.policy import KnowledgeBaseQueryPolicy
 from app.services.knowledge_base.query.retrieval_execution import execute_retrieval_plan
@@ -23,6 +42,18 @@ logger = logging.getLogger(__name__)
 LOG_EVENT_PIPELINE_START = "kb_query_pipeline_start"
 LOG_EVENT_PIPELINE_RUN = "kb_query_pipeline_run"
 FALLBACK_MIN_TRUSTED_TOP_SCORE = 0.7
+
+
+@dataclass(frozen=True, slots=True)
+class _PipelineContractRun:
+    normalized_query: NormalizedQuery
+    router_decision: RouterDecision
+    rewrite_result: RewriteResult
+    vector_hits: tuple[VectorHit, ...]
+    lexical_hits: tuple[LexicalHit, ...]
+    evidence_packet: EvidencePacket
+    answer_result: AnswerResult
+    legacy_result: QueryAnswerResult
 
 
 class KnowledgeBaseQueryPipeline:
@@ -63,6 +94,112 @@ class KnowledgeBaseQueryPipeline:
         category: str | None = None,
         logical_id: str | None = None,
         attribute_filters=None,
+    ) -> QueryAnswerResult:
+        return self._execute_pipeline_contracts(
+            query,
+            max_num_results=max_num_results,
+            rewrite_query=rewrite_query,
+            score_threshold=score_threshold,
+            category=category,
+            logical_id=logical_id,
+            attribute_filters=attribute_filters,
+        ).legacy_result
+
+    def answer_query_dto(
+        self,
+        query: str,
+        *,
+        max_num_results: int | None = None,
+        rewrite_query: bool = False,
+        score_threshold: float | None = None,
+        category: str | None = None,
+        logical_id: str | None = None,
+        attribute_filters=None,
+        user_locale: str = "uk-UA",
+        detected_language: str = "uk",
+    ) -> AnswerResult:
+        return self._execute_pipeline_contracts(
+            query,
+            max_num_results=max_num_results,
+            rewrite_query=rewrite_query,
+            score_threshold=score_threshold,
+            category=category,
+            logical_id=logical_id,
+            attribute_filters=attribute_filters,
+            user_locale=user_locale,
+            detected_language=detected_language,
+        ).answer_result
+
+    def _execute_pipeline_contracts(
+        self,
+        query: str,
+        *,
+        max_num_results: int | None,
+        rewrite_query: bool,
+        score_threshold: float | None,
+        category: str | None,
+        logical_id: str | None,
+        attribute_filters,
+        user_locale: str = "uk-UA",
+        detected_language: str = "uk",
+    ) -> _PipelineContractRun:
+        normalized_query = build_normalized_query(
+            query,
+            user_locale=user_locale,
+            detected_language=detected_language,
+        )
+        legacy_result = self._execute_legacy_answer_query(
+            query,
+            max_num_results=max_num_results,
+            rewrite_query=rewrite_query,
+            score_threshold=score_threshold,
+            category=category,
+            logical_id=logical_id,
+            attribute_filters=attribute_filters,
+        )
+        router_decision = router_decision_from_plan(legacy_result.plan)
+        rewrite_result = rewrite_result_from_plan(
+            normalized_query,
+            legacy_result.plan,
+            category=category,
+            logical_id=logical_id,
+            attribute_filters=attribute_filters,
+        )
+        vector_hits = vector_hits_from_search_response(
+            legacy_result.search_response,
+            structure_reader=self._structure_reader,
+        )
+        lexical_hits = lexical_hits_stub()
+        evidence_packet = build_evidence_packet(
+            vector_hits=vector_hits,
+            lexical_hits=lexical_hits,
+        )
+        answer_result = answer_result_from_query_answer_result(
+            legacy_result,
+            evidence_packet=evidence_packet,
+            router_decision=router_decision,
+        )
+        return _PipelineContractRun(
+            normalized_query=normalized_query,
+            router_decision=router_decision,
+            rewrite_result=rewrite_result,
+            vector_hits=vector_hits,
+            lexical_hits=lexical_hits,
+            evidence_packet=evidence_packet,
+            answer_result=answer_result,
+            legacy_result=legacy_result,
+        )
+
+    def _execute_legacy_answer_query(
+        self,
+        query: str,
+        *,
+        max_num_results: int | None,
+        rewrite_query: bool,
+        score_threshold: float | None,
+        category: str | None,
+        logical_id: str | None,
+        attribute_filters,
     ) -> QueryAnswerResult:
         runtime_mode = self._query_policy.settings.kb_query_llm_mode
         with trace_stage(
