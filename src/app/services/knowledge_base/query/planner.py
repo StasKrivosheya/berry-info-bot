@@ -4,8 +4,8 @@ import logging
 
 from app.services.knowledge_base.query.types import (
     QueryClassification,
-    QueryPlan,
     QueryRetrievalPlan,
+    QueryRouteContext,
     QueryScopeDetection,
     QueryStrategy,
 )
@@ -55,7 +55,7 @@ def build_query_plan(
     classification: QueryClassification,
     scope_detection: QueryScopeDetection,
     retrieval_plan: QueryRetrievalPlan,
-) -> QueryPlan:
+) -> QueryRouteContext:
     strategy = strategy_for_intent(classification.intent)
     plan = build_query_plan_with_strategy(
         classification,
@@ -83,9 +83,9 @@ def build_query_plan_with_strategy(
     strategy: QueryStrategy,
     *,
     rationale: tuple[str, ...] | None = None,
-) -> QueryPlan:
+) -> QueryRouteContext:
     needs_retrieval, needs_structure = strategy_requirements(strategy)
-    return QueryPlan(
+    return QueryRouteContext(
         classification=classification,
         scope_detection=scope_detection,
         strategy=strategy,

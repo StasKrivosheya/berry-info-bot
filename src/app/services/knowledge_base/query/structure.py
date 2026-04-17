@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.services.knowledge_base.manifest.reader import load_manifest_sync_items
 from app.services.knowledge_base.normalizer import normalize_cell_text
+from app.services.knowledge_base.query.dto import VectorHit
 from app.services.knowledge_base.query.rules import SCOPE_RULES
 from app.services.knowledge_base.query.text import token_overlap_score, tokenize_text
 from app.services.knowledge_base.query.types import (
@@ -60,6 +61,36 @@ class KnowledgeBaseStructureReader:
             return None
 
         logical_id = str(hit.attributes.get("logical_id", "")).strip() or Path(hit.filename).stem
+        documents_by_id = {document.logical_id: document for document in documents}
+        document = documents_by_id.get(logical_id)
+        if document is None:
+            return None
+
+        section = _match_section(hit.text, document.sections)
+        if section is None:
+            return SearchHitDebugContext(
+                logical_id=document.logical_id,
+                source_file=document.source_file or None,
+                document_title=document.title or None,
+                heading_path=(document.title,) if document.title else (),
+            )
+
+        return SearchHitDebugContext(
+            logical_id=document.logical_id,
+            source_file=document.source_file or None,
+            document_title=document.title or None,
+            heading_path=section.heading_path,
+        )
+
+    def resolve_vector_hit_context(self, hit: VectorHit) -> SearchHitDebugContext | None:
+        documents = self.load_documents()
+        if not documents:
+            return None
+
+        logical_id = str(hit.attributes.get("logical_id", "")).strip()
+        if not logical_id:
+            section_id = hit.section_id.split(":", maxsplit=1)[0]
+            logical_id = section_id.strip()
         documents_by_id = {document.logical_id: document for document in documents}
         document = documents_by_id.get(logical_id)
         if document is None:

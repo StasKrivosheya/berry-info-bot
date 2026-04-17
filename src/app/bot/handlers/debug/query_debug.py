@@ -20,11 +20,7 @@ from app.core.constants import DEFAULT_DEBUG_COMMANDS_MODE
 from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
 from app.services.knowledge_base.query.renderer import render_query_answer
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
-from app.services.knowledge_base.query.types import (
-    QueryAnswerResult,
-    QueryClassification,
-    QueryPlan,
-)
+from app.services.knowledge_base.query.types import QueryClassification, QueryInspectionResult
 from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
 
 router = Router(name="query-debug")
@@ -144,8 +140,6 @@ async def query_classification_handler(
     admin_user_ids: set[int] | None = None,
     debug_commands_mode: str | None = None,
 ) -> None:
-    """Temporary debug command: show query classification with policy metadata."""
-
     await _handle_query_debug(
         message,
         command,
@@ -167,8 +161,6 @@ async def query_plan_handler(
     admin_user_ids: set[int] | None = None,
     debug_commands_mode: str | None = None,
 ) -> None:
-    """Temporary debug command: show query plan, policy mode, and routing trace."""
-
     await _handle_query_debug(
         message,
         command,
@@ -178,7 +170,7 @@ async def query_plan_handler(
         usage_text=QPLAN_USAGE_TEXT,
         render_fn=lambda query: _render_plan_debug(
             query,
-            _create_query_pipeline().plan_query(query),
+            _create_query_pipeline().inspect_query(query, rewrite_query=False),
         ),
     )
 
@@ -190,8 +182,6 @@ async def query_route_handler(
     admin_user_ids: set[int] | None = None,
     debug_commands_mode: str | None = None,
 ) -> None:
-    """Temporary debug command: render policy routing decisions only."""
-
     await _handle_query_debug(
         message,
         command,
@@ -201,7 +191,7 @@ async def query_route_handler(
         usage_text=QROUTE_USAGE_TEXT,
         render_fn=lambda query: _render_policy_debug(
             query,
-            _create_query_pipeline().answer_query(query, rewrite_query=False),
+            _create_query_pipeline().inspect_query(query, rewrite_query=False),
         ),
     )
 
@@ -213,8 +203,6 @@ async def query_answer_handler(
     admin_user_ids: set[int] | None = None,
     debug_commands_mode: str | None = None,
 ) -> None:
-    """Temporary debug command: run the reusable rules-first answer pipeline."""
-
     await _handle_query_debug(
         message,
         command,
@@ -224,7 +212,7 @@ async def query_answer_handler(
         usage_text=QANSWER_USAGE_TEXT,
         render_fn=lambda query: _render_answer_debug(
             query,
-            _create_query_pipeline().answer_query(query, rewrite_query=False),
+            _create_query_pipeline().inspect_query(query, rewrite_query=False),
         ),
     )
 
@@ -236,8 +224,6 @@ async def query_retrieval_handler(
     admin_user_ids: set[int] | None = None,
     debug_commands_mode: str | None = None,
 ) -> None:
-    """Temporary debug command: inspect retrieval planning and execution."""
-
     await _handle_query_debug(
         message,
         command,
@@ -247,7 +233,7 @@ async def query_retrieval_handler(
         usage_text=QRETRIEVE_USAGE_TEXT,
         render_fn=lambda query: _render_retrieval_debug(
             query,
-            _create_query_pipeline().answer_query(query, rewrite_query=False),
+            _create_query_pipeline().inspect_query(query, rewrite_query=False),
         ),
     )
 
@@ -380,106 +366,94 @@ def _render_classification_debug(query: str, classification: QueryClassification
     return _render_debug_message(service_lines, "\n".join(body_lines))
 
 
-def _render_plan_debug(query: str, plan: QueryPlan) -> str:
+def _render_plan_debug(query: str, inspection: QueryInspectionResult) -> str:
+    route = inspection.route_context
     service_lines = [
         "Service:",
         f"query={query}",
-        f"intent={plan.intent}",
-        f"intent_source={plan.classification.source}",
-        f"scope={plan.scope_detection.primary_scope}",
-        f"scope_source={plan.scope_detection.source}",
-        f"strategy={plan.strategy}",
-        f"strategy_source={plan.strategy_source}",
-        f"retrieval_source={plan.retrieval_plan.source}",
-        f"needs_retrieval={plan.needs_retrieval}",
-        f"needs_structure={plan.needs_structure}",
+        f"intent={inspection.router_decision.intent}",
+        f"scope={inspection.router_decision.routing_flags['scope']}",
+        f"strategy={inspection.router_decision.routing_flags['strategy']}",
+        f"needs_retrieval={inspection.router_decision.routing_flags['needs_retrieval']}",
+        f"needs_structure={inspection.router_decision.routing_flags['needs_structure']}",
     ]
     body_lines = [
         "Intent rules:",
         *[
             f"- {rule.rule_id} (priority={rule.priority} evidence={', '.join(rule.evidence)})"
-            for rule in plan.classification.matched_rules
+            for rule in route.classification.matched_rules
         ],
         "",
         "Scope rules:",
         *[
             f"- {rule.rule_id} (priority={rule.priority} evidence={', '.join(rule.evidence)})"
-            for rule in plan.scope_detection.matched_rules
+            for rule in route.scope_detection.matched_rules
         ],
         "",
-        "Plan rationale:",
-        *[f"- {reason}" for reason in plan.rationale],
+        "Route rationale:",
+        *[f"- {reason}" for reason in route.rationale],
         "",
-        _render_retrieval_plan_body(plan),
+        _render_rewrite_body(inspection),
         "",
-        _render_policy_body(plan),
+        _render_policy_body(inspection),
     ]
     return _render_debug_message(service_lines, "\n".join(line for line in body_lines if line))
 
 
-def _render_policy_debug(query: str, result: QueryAnswerResult) -> str:
-    plan = result.plan
-    trace = result.retrieval_trace
+def _render_policy_debug(query: str, inspection: QueryInspectionResult) -> str:
+    trace = inspection.retrieval_trace
     service_lines = [
         "Service:",
         f"query={query}",
-        f"mode={plan.policy_trace.mode}",
-        f"llm_requested={plan.policy_trace.llm_requested}",
-        f"llm_used={plan.policy_trace.llm_used}",
-        f"llm_cache_hit={plan.policy_trace.llm_cache_hit}",
+        f"mode={inspection.route_context.policy_trace.mode}",
+        f"llm_requested={inspection.route_context.policy_trace.llm_requested}",
+        f"llm_used={inspection.route_context.policy_trace.llm_used}",
+        f"llm_cache_hit={inspection.route_context.policy_trace.llm_cache_hit}",
         f"llm_escalation_triggered={trace.llm_escalation_triggered if trace else False}",
         f"retry_executed={trace.retry_executed if trace else False}",
     ]
-    body_parts = [_render_policy_body(plan), _render_retrieval_trace_body(result)]
+    body_parts = [_render_policy_body(inspection), _render_retrieval_trace_body(inspection)]
     return _render_debug_message(service_lines, "\n\n".join(part for part in body_parts if part))
 
 
-def _render_answer_debug(query: str, result: QueryAnswerResult) -> str:
+def _render_answer_debug(query: str, inspection: QueryInspectionResult) -> str:
+    result = inspection.answer_result
     service_lines = [
         "Service:",
         f"query={query}",
-        f"intent={result.plan.intent}",
-        f"intent_source={result.plan.classification.source}",
-        f"scope={result.plan.scope_detection.primary_scope}",
-        f"scope_source={result.plan.scope_detection.source}",
-        f"strategy={result.plan.strategy}",
-        f"strategy_source={result.plan.strategy_source}",
-        f"retrieval_source={result.plan.retrieval_plan.source}",
-        f"fallback_used={result.fallback_used}",
-        f"source_count={len(result.sources)}",
+        f"intent={inspection.router_decision.intent}",
+        f"scope={inspection.router_decision.routing_flags['scope']}",
+        f"strategy={inspection.router_decision.routing_flags['strategy']}",
+        f"answer_state={result.state}",
+        f"source_count={len(result.source_section_ids)}",
     ]
     body_parts = [
-        _render_retrieval_body(result),
-        _render_policy_body(result.plan),
+        _render_retrieval_body(inspection),
+        _render_policy_body(inspection),
         render_query_answer(result),
     ]
     return _render_debug_message(service_lines, "\n\n".join(part for part in body_parts if part))
 
 
-def _render_retrieval_debug(query: str, result: QueryAnswerResult) -> str:
-    merged_result_count = (
-        result.retrieval_trace.merged_result_count if result.retrieval_trace else 0
-    )
+def _render_retrieval_debug(query: str, inspection: QueryInspectionResult) -> str:
+    trace = inspection.retrieval_trace
+    merged_result_count = trace.merged_result_count if trace else 0
+    executed_query_count = len(trace.executed_queries) if trace else 0
+    retry_executed = trace.retry_executed if trace else False
     service_lines = [
         "Service:",
         f"query={query}",
-        f"retrieval_source={result.plan.retrieval_plan.source}",
-        f"needs_retrieval={result.plan.needs_retrieval}",
-        (
-            "executed_queries="
-            f"{len(result.retrieval_trace.executed_queries) if result.retrieval_trace else 0}"
-        ),
+        f"retrieval_source={inspection.route_context.retrieval_plan.source}",
+        f"needs_retrieval={inspection.route_context.needs_retrieval}",
+        f"executed_queries={executed_query_count}",
         f"merged_result_count={merged_result_count}",
-        (
-            "retry_executed="
-            f"{result.retrieval_trace.retry_executed if result.retrieval_trace else False}"
-        ),
+        f"retry_executed={retry_executed}",
     ]
-    return _render_debug_message(service_lines, _render_retrieval_body(result))
+    return _render_debug_message(service_lines, _render_retrieval_body(inspection))
 
 
-def _render_policy_body(plan: QueryPlan) -> str:
-    trace = plan.policy_trace
+def _render_policy_body(inspection: QueryInspectionResult) -> str:
+    trace = inspection.route_context.policy_trace
     deterministic_retrieval = trace.deterministic_retrieval_plan
     toggle_lines = [
         f"- rules={trace.stage_toggles.rules_enabled}",
@@ -504,15 +478,9 @@ def _render_policy_body(plan: QueryPlan) -> str:
         f"- llm_failure_reason={trace.llm_failure_reason or '(none)'}",
         f"- llm_debug_note={trace.llm_debug_note or '(none)'}",
         f"- deterministic_intent={trace.deterministic_classification.intent}",
-        (
-            "- deterministic_intent_confidence="
-            f"{trace.deterministic_classification.confidence}"
-        ),
+        f"- deterministic_intent_confidence={trace.deterministic_classification.confidence}",
         f"- deterministic_scope={trace.deterministic_scope_detection.primary_scope}",
-        (
-            "- deterministic_scope_confidence="
-            f"{trace.deterministic_scope_detection.confidence}"
-        ),
+        f"- deterministic_scope_confidence={trace.deterministic_scope_detection.confidence}",
         f"- deterministic_strategy={trace.deterministic_strategy}",
         (
             "- deterministic_retrieval_primary="
@@ -529,37 +497,52 @@ def _render_policy_body(plan: QueryPlan) -> str:
     return "\n".join(body_lines)
 
 
-def _render_retrieval_body(result: QueryAnswerResult) -> str:
+def _render_retrieval_body(inspection: QueryInspectionResult) -> str:
     body_parts = [
-        _render_retrieval_plan_body(result.plan),
+        _render_rewrite_body(inspection),
+        _render_evidence_body(inspection),
     ]
-    if result.retrieval_trace is not None:
-        body_parts.append(_render_retrieval_trace_body(result))
+    if inspection.retrieval_trace is not None:
+        body_parts.append(_render_retrieval_trace_body(inspection))
     return "\n\n".join(part for part in body_parts if part)
 
 
-def _render_retrieval_plan_body(plan: QueryPlan) -> str:
-    retrieval_plan = plan.retrieval_plan
-    alternate_queries = ", ".join(retrieval_plan.alternate_queries) or "(none)"
-    keywords = ", ".join(retrieval_plan.keywords) or "(none)"
-    rationale = "\n".join(f"- {note}" for note in retrieval_plan.rationale) or "- (none)"
+def _render_rewrite_body(inspection: QueryInspectionResult) -> str:
+    rewrite = inspection.rewrite_result
+    alternate_queries = ", ".join(rewrite.lexical["synonyms"]) or "(none)"
+    keywords = ", ".join(rewrite.lexical["keywords"]) or "(none)"
+    phrases = ", ".join(rewrite.lexical["phrases"]) or "(none)"
     return "\n".join(
         (
-            "Retrieval plan:",
-            f"- source={retrieval_plan.source}",
-            f"- primary_query={retrieval_plan.primary_query}",
-            f"- alternate_queries={alternate_queries}",
+            "Rewrite result:",
+            f"- canonical_uk={rewrite.canonical_uk}",
+            f"- vector_query_uk={rewrite.vector_query_uk}",
+            f"- synonyms={alternate_queries}",
             f"- keywords={keywords}",
-            f"- confidence={retrieval_plan.confidence}",
-            f"- debug_note={retrieval_plan.debug_note or '(none)'}",
-            "Rationale:",
-            rationale,
+            f"- phrases={phrases}",
+            f"- category={rewrite.filters['category'] or '(none)'}",
+            f"- logical_id={rewrite.filters['logical_id'] or '(none)'}",
         )
     )
 
 
-def _render_retrieval_trace_body(result: QueryAnswerResult) -> str:
-    trace = result.retrieval_trace
+def _render_evidence_body(inspection: QueryInspectionResult) -> str:
+    packet = inspection.evidence_packet
+    if packet is None:
+        return ""
+    lines = [
+        "Evidence packet:",
+        f"- item_count={len(packet.items)}",
+        f"- token_budget_used={packet.token_budget_used}",
+        f"- truncation_applied={packet.truncation_applied}",
+    ]
+    for item in packet.items[:3]:
+        lines.append(f"- {item.source_type}:{item.section_id} score={item.score}")
+    return "\n".join(lines)
+
+
+def _render_retrieval_trace_body(inspection: QueryInspectionResult) -> str:
+    trace = inspection.retrieval_trace
     if trace is None:
         return ""
     initial_top_score = (
@@ -572,9 +555,7 @@ def _render_retrieval_trace_body(result: QueryAnswerResult) -> str:
         else "(none)"
     )
     top_score = (
-        str(result.search_response.top_score)
-        if result.search_response is not None and result.search_response.top_score is not None
-        else "(none)"
+        str(inspection.vector_top_score) if inspection.vector_top_score is not None else "(none)"
     )
     initial_planned_queries = ", ".join(trace.initial_planned_queries) or "(none)"
     initial_executed_queries = ", ".join(trace.initial_executed_queries) or "(none)"
@@ -593,8 +574,6 @@ def _render_retrieval_trace_body(result: QueryAnswerResult) -> str:
             f"- retry_executed={trace.retry_executed}",
             f"- final_planned_queries={planned_queries}",
             f"- final_executed_queries={executed_queries}",
-            f"- planned_queries={planned_queries}",
-            f"- executed_queries={executed_queries}",
             f"- retry_result_count={trace.retry_result_count}",
             f"- retry_top_score={retry_top_score}",
             f"- merged_raw_hit_count={trace.merged_raw_hit_count}",

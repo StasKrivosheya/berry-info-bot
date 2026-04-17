@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.knowledge_base.query.types import (
-    QueryRetrievalExecutionTrace,
-    QueryRetrievalPlan,
-)
+from app.services.knowledge_base.query.dto import VectorHit
+from app.services.knowledge_base.query.types import QueryRetrievalExecutionTrace, QueryRetrievalPlan
 from app.services.knowledge_base.types_openai import SearchHit, SearchResponse
 
 EARLY_STOP_TOP_SCORE = 0.88
 MULTI_QUERY_SCORE_BONUS = 0.02
 MAX_MULTI_QUERY_SCORE_BONUS = 0.06
+
+
+@dataclass(frozen=True, slots=True)
+class VectorRetrievalResult:
+    hits: tuple[VectorHit, ...]
+    top_score: float | None
+    fallback_triggered: bool
+    fallback_message: str | None
 
 
 @dataclass(slots=True)
@@ -19,7 +25,7 @@ class _MergedHit:
     seen_count: int = 0
 
 
-def execute_retrieval_plan(
+def execute_vector_retrieval(
     retriever,
     retrieval_plan: QueryRetrievalPlan,
     *,
@@ -30,7 +36,7 @@ def execute_retrieval_plan(
     logical_id: str | None = None,
     attribute_filters=None,
     max_alternate_queries: int = 1,
-) -> tuple[SearchResponse, QueryRetrievalExecutionTrace]:
+) -> tuple[VectorRetrievalResult, QueryRetrievalExecutionTrace]:
     planned_queries = _planned_queries(
         retrieval_plan,
         max_alternate_queries=max_alternate_queries,
@@ -67,13 +73,19 @@ def execute_retrieval_plan(
         responses,
         max_num_results=max_num_results,
     )
+    result = VectorRetrievalResult(
+        hits=tuple(_vector_hit_from_search_hit(hit) for hit in merged_response.results),
+        top_score=merged_response.top_score,
+        fallback_triggered=merged_response.fallback_triggered,
+        fallback_message=merged_response.fallback_message,
+    )
     return (
-        merged_response,
+        result,
         QueryRetrievalExecutionTrace(
             planned_queries=planned_queries,
             executed_queries=tuple(executed_queries),
             merged_raw_hit_count=sum(len(response.results) for response in responses),
-            merged_result_count=len(merged_response.results),
+            merged_result_count=len(result.hits),
             stop_reason=stop_reason,
         ),
     )
@@ -162,3 +174,16 @@ def _merge_search_responses(
 def _logical_id_for_hit(hit: SearchHit) -> str:
     logical_id = str(hit.attributes.get("logical_id", "")).strip()
     return logical_id or hit.filename
+
+
+def _vector_hit_from_search_hit(hit: SearchHit) -> VectorHit:
+    logical_id = _logical_id_for_hit(hit)
+    attributes = dict(hit.attributes)
+    attributes["filename"] = hit.filename
+    return VectorHit(
+        section_id=f"{logical_id}:{hit.file_id}",
+        file_id=hit.file_id,
+        score=hit.score,
+        text=hit.text,
+        attributes=attributes,
+    )

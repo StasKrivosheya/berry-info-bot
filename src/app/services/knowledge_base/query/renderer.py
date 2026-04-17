@@ -1,20 +1,38 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from app.services.knowledge_base.query.types import AnswerBlock, QueryAnswerResult
+from dataclasses import dataclass
+
+from app.services.knowledge_base.query.dto import AnswerResult
 
 
-def render_query_answer(result: QueryAnswerResult) -> str:
+@dataclass(frozen=True, slots=True)
+class AnswerBlock:
+    title: str
+    lines: tuple[str, ...] = ()
+    body: str | None = None
+
+
+def render_query_answer(result: AnswerResult) -> str:
+    return result.answer_text
+
+
+def compose_answer_text(
+    *,
+    summary: str | None,
+    blocks: tuple[AnswerBlock, ...] = (),
+    sources: tuple[str, ...] = (),
+) -> str:
     parts: list[str] = []
-    if result.summary:
-        parts.append(result.summary)
+    if summary:
+        parts.append(summary)
 
-    for block in result.blocks:
+    for block in blocks:
         rendered = _render_block(block)
         if rendered:
             parts.append(rendered)
 
-    if result.sources:
-        parts.append("Sources:\n" + "\n".join(f"- {source}" for source in result.sources))
+    if sources:
+        parts.append("Sources:\n" + "\n".join(f"- {source}" for source in sources))
 
     return "\n\n".join(part for part in parts if part)
 
@@ -28,4 +46,3 @@ def _render_block(block: AnswerBlock) -> str:
     elif block.body:
         parts.append(block.body)
     return "\n".join(parts).strip()
-
