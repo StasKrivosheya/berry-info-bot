@@ -74,12 +74,7 @@ def _write_manifest(tmp_path: Path) -> Path:
     markdown_dir.mkdir(parents=True, exist_ok=True)
 
     (markdown_dir / "programs.md").write_text(
-        (
-            "# Організовані програми\n\n"
-            "## ВИДИ ПРОГРАМ\n\n"
-            "## Програма А\n\n"
-            "## Програма Б\n"
-        ),
+        ("# Організовані програми\n\n## ВИДИ ПРОГРАМ\n\n## Програма А\n\n## Програма Б\n"),
         encoding="utf-8",
     )
     (markdown_dir / "park.md").write_text(
@@ -356,13 +351,15 @@ def test_retrieval_stage_can_be_disabled_safely(tmp_path: Path) -> None:
         ),
     )
 
-    result = pipeline.answer_query("Чи є у вас поні-ферма?")
+    inspection = pipeline.inspect_query("Чи є у вас поні-ферма?")
+    assert inspection.answer_result is not None
+    result = inspection.answer_result
 
     assert retriever.calls == []
-    assert result.plan.policy_trace.stage_toggles.retrieval_enabled is False
-    assert result.fallback_used is True
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.stop_reason == "retrieval_disabled_by_configuration"
+    assert inspection.route_context.policy_trace.stage_toggles.retrieval_enabled is False
+    assert result.state == "fallback"
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.stop_reason == "retrieval_disabled_by_configuration"
 
 
 def test_renderer_stage_can_be_disabled_safely(tmp_path: Path) -> None:
@@ -377,7 +374,9 @@ def test_renderer_stage_can_be_disabled_safely(tmp_path: Path) -> None:
         ),
     )
 
-    result = pipeline.answer_query("Чи є у вас поні-ферма?")
+    inspection = pipeline.inspect_query("Чи є у вас поні-ферма?")
+    assert inspection.answer_result is not None
+    result = inspection.answer_result
 
     assert retriever.calls == [
         {
@@ -390,11 +389,11 @@ def test_renderer_stage_can_be_disabled_safely(tmp_path: Path) -> None:
             "attribute_filters": None,
         }
     ]
-    assert result.summary == "Renderer stage is disabled by configuration."
-    assert result.blocks == ()
-    assert result.fallback_used is True
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.executed_queries == ("Чи є у вас поні-ферма?",)
+    assert result.answer_text == "Renderer stage is disabled by configuration."
+    assert result.source_section_ids == ()
+    assert result.state == "fallback"
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.executed_queries == ("Чи є у вас поні-ферма?",)
 
 
 def test_settings_accept_comma_separated_llm_allowed_for_from_env(tmp_path: Path) -> None:

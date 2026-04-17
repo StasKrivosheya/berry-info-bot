@@ -14,7 +14,7 @@ from app.services.knowledge_base.query.dto import (
     RouterDecision,
     VectorHit,
 )
-from app.services.knowledge_base.query.dto_adapters import build_evidence_packet
+from app.services.knowledge_base.query.evidence import build_evidence_packet
 
 FIXED_TIME = datetime(2026, 4, 17, 12, 30, tzinfo=UTC)
 
