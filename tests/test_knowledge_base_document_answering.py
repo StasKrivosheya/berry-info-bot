@@ -1,4 +1,4 @@
-﻿# ruff: noqa: RUF001
+# ruff: noqa: RUF001
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.services.knowledge_base.query.classifier import classify_query_intent
 from app.services.knowledge_base.query.config import KnowledgeBaseQuerySettings
+from app.services.knowledge_base.query.dto import AnswerResult
 from app.services.knowledge_base.query.execution import execute_query_plan
 from app.services.knowledge_base.query.llm import (
     QueryInterpretationRequest,
@@ -20,10 +21,10 @@ from app.services.knowledge_base.query.scope import detect_query_scope
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
 from app.services.knowledge_base.query.types import (
     QueryClassification,
-    QueryPlan,
     QueryPolicyTrace,
     QueryRetrievalHints,
     QueryRetrievalPlan,
+    QueryRouteContext,
     QueryScopeDetection,
     StructuredDocument,
     StructuredSection,
@@ -84,6 +85,15 @@ class StaticStructureReader:
         return self.all_documents
 
 
+def _inspect_and_answer(
+    pipeline: KnowledgeBaseQueryPipeline,
+    query: str,
+) -> tuple[object, AnswerResult]:
+    inspection = pipeline.inspect_query(query)
+    assert inspection.answer_result is not None
+    return inspection, inspection.answer_result
+
+
 def _disabled_settings() -> KnowledgeBaseQuerySettings:
     return KnowledgeBaseQuerySettings(
         _env_file=None,
@@ -114,7 +124,9 @@ def _write_manifest(tmp_path: Path) -> Path:
             "## ВИДИ ПРОГРАМ\n\n"
             "## Програма А\n\n"
             "## Програма Б\n\n"
-            "## ДОДАТКОВІ ПОСЛУГИ\n"
+            "## ДОДАТКОВІ ПОСЛУГИ\n\n"
+            "## Трансфер з інших міст\n\n"
+            "## Дніпро\n"
         ),
         encoding="utf-8",
     )
@@ -394,12 +406,15 @@ def test_pipeline_enumeration_uses_structure_and_skips_retrieval(tmp_path: Path)
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Які є види організованих програм?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Які є види організованих програм?",
+    )
 
     assert retriever.calls == []
-    assert result.plan.intent == "enumeration"
-    assert result.plan.strategy == "enumeration_catalog"
-    assert result.plan.policy_trace.mode == "disabled"
+    assert inspection.route_context.intent == "enumeration"
+    assert inspection.route_context.strategy == "enumeration_catalog"
+    assert inspection.route_context.policy_trace.mode == "disabled"
     rendered = render_query_answer(result)
     assert "Знайшов такі організовані програми:" in rendered
     assert "- Програма А" in rendered
@@ -415,12 +430,15 @@ def test_pipeline_overview_uses_structure_and_skips_retrieval(tmp_path: Path) ->
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Що ви можете мені запропонувати?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Що ви можете мені запропонувати?",
+    )
 
     assert retriever.calls == []
-    assert result.plan.intent == "overview"
-    assert result.plan.strategy == "overview_summary"
-    assert result.plan.policy_trace.mode == "disabled"
+    assert inspection.route_context.intent == "overview"
+    assert inspection.route_context.strategy == "overview_summary"
+    assert inspection.route_context.policy_trace.mode == "disabled"
     rendered = render_query_answer(result)
     assert "Організовані програми" in rendered
     assert "У парку можна" in rendered
@@ -428,6 +446,82 @@ def test_pipeline_overview_uses_structure_and_skips_retrieval(tmp_path: Path) ->
     assert "- Поні-ферма" in rendered
     assert "Додаткові послуги" in rendered
     assert "- Альтанки з мангалом" in rendered
+
+
+def test_pipeline_topic_program_phrase_uses_structure_catalog(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(_search_response(logical_id="programs", text="Програма А"))
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    program_queries = (
+        "Дитячі програми",
+        "які є види програм?",
+        "підкажіть щодо доступних організованих програм?",
+        "надайте перелік дитячих програм які можна замовити?",
+    )
+
+    for query in program_queries:
+        inspection, result = _inspect_and_answer(pipeline, query)
+        assert inspection.route_context.scope_detection.primary_scope == "programs"
+        assert inspection.route_context.strategy == "enumeration_catalog"
+        rendered = render_query_answer(result)
+        assert "- Програма А" in rendered
+        assert "- Програма Б" in rendered
+        assert "Дніпро" not in rendered
+
+    assert retriever.calls == []
+
+
+def test_pipeline_activity_topic_phrase_uses_structure_overview(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(_search_response(logical_id="park", text="Поні-ферма"))
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    inspection, result = _inspect_and_answer(pipeline, "які є спорт активності")
+
+    assert retriever.calls == []
+    assert inspection.route_context.intent == "unknown"
+    assert inspection.route_context.scope_detection.primary_scope == "park_activities"
+    assert inspection.route_context.strategy == "overview_summary"
+    rendered = render_query_answer(result)
+    assert "- Ігрова зона" in rendered
+    assert "- Поні-ферма" in rendered
+
+
+def test_pipeline_existence_query_still_uses_retrieval_for_no_info(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(
+        SearchResponse(
+            results=[],
+            top_score=None,
+            used_threshold=0.7,
+            fallback_triggered=False,
+            fallback_message=None,
+        )
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    inspection, result = _inspect_and_answer(pipeline, "Чи є у вас ковзани?")
+
+    assert len(retriever.calls) == 1
+    assert inspection.route_context.intent == "detail"
+    assert inspection.route_context.strategy == "detail_retrieval"
+    assert result.answer_text == NO_RELEVANT_INFO_FALLBACK
+    assert result.source_section_ids == ()
 
 
 def test_pipeline_detail_uses_retrieval_and_renders_nearby_sections(tmp_path: Path) -> None:
@@ -439,7 +533,10 @@ def test_pipeline_detail_uses_retrieval_and_renders_nearby_sections(tmp_path: Pa
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Чи є у вас поні-ферма?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Чи є у вас поні-ферма?",
+    )
 
     assert retriever.calls == [
         {
@@ -452,9 +549,9 @@ def test_pipeline_detail_uses_retrieval_and_renders_nearby_sections(tmp_path: Pa
             "attribute_filters": None,
         }
     ]
-    assert result.plan.intent == "detail"
-    assert result.plan.strategy == "detail_retrieval"
-    assert result.plan.policy_trace.mode == "disabled"
+    assert inspection.route_context.intent == "detail"
+    assert inspection.route_context.strategy == "detail_retrieval"
+    assert inspection.route_context.policy_trace.mode == "disabled"
     rendered = render_query_answer(result)
     assert "Знайшов найближчі розділи:" in rendered
     assert "Сімейний відпочинок > Що входить у вартість квитка?" in rendered
@@ -478,7 +575,10 @@ def test_pipeline_ambiguous_zoo_query_uses_deterministic_retrieval_rewrite(tmp_p
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("хто у вас є в зоопарку?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "хто у вас є в зоопарку?",
+    )
 
     assert retriever.calls == [
         {
@@ -491,9 +591,12 @@ def test_pipeline_ambiguous_zoo_query_uses_deterministic_retrieval_rewrite(tmp_p
             "attribute_filters": None,
         }
     ]
-    assert result.plan.retrieval_plan.primary_query == "екскурсія на поні-ферму тварини ранчо"
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.stop_reason == "no_alternate_queries_planned"
+    assert (
+        inspection.route_context.retrieval_plan.primary_query
+        == "екскурсія на поні-ферму тварини ранчо"
+    )
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.stop_reason == "no_alternate_queries_planned"
     rendered = render_query_answer(result)
     assert "найближчі розділи" in rendered.casefold()
     assert "- Поні-ферма" in rendered
@@ -552,18 +655,21 @@ def test_pipeline_fallback_mode_keeps_strong_schedule_hit_without_llm_retry(
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("Коли відкривається парк?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Коли відкривається парк?",
+    )
 
     assert len(interpreter.calls) == 0
     assert len(retriever.calls) == 1
     assert retriever.calls[0]["query"] == "Коли відкривається парк?"
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.llm_escalation_triggered is False
-    assert result.retrieval_trace.retry_executed is False
-    assert result.retrieval_trace.renderer_trusted_top_hit is True
-    assert result.blocks[0].title == "Св (Квітень Травень)"
-    assert result.blocks[0].lines[0] == "Час роботи: з 10:00 до 19:00"
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.llm_escalation_triggered is False
+    assert inspection.retrieval_trace.retry_executed is False
+    assert inspection.retrieval_trace.renderer_trusted_top_hit is True
     rendered = render_query_answer(result)
+    assert "Св (Квітень Травень)" in rendered
+    assert "Час роботи: з 10:00 до 19:00" in rendered
     assert "Додаткові послуги на території парку" not in rendered.split("\n\n")[1]
 
 
@@ -590,9 +696,12 @@ def test_pipeline_animal_query_prefers_animal_lines_over_generic_program_content
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Які є у вас тваринки?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Які є у вас тваринки?",
+    )
 
-    assert result.blocks
+    assert inspection.retrieval_trace is not None
     rendered = render_query_answer(result)
     assert "козликами" in rendered
     assert "альпакою" in rendered
@@ -615,9 +724,9 @@ def test_pipeline_safe_fallback_uses_search_fallback_when_structure_missing(tmp_
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Незрозумілий запит")
+    _, result = _inspect_and_answer(pipeline, "Незрозумілий запит")
 
-    assert result.fallback_used is True
+    assert result.state == "fallback"
     assert render_query_answer(result) == NO_RELEVANT_INFO_FALLBACK
 
 
@@ -635,9 +744,9 @@ def test_pipeline_detail_falls_back_to_raw_hits_when_structure_missing(tmp_path:
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Чи є у вас поні ферма?")
+    _, result = _inspect_and_answer(pipeline, "Чи є у вас поні ферма?")
 
-    assert result.fallback_used is True
+    assert result.state == "fallback"
     rendered = render_query_answer(result)
     assert NO_RELEVANT_INFO_FALLBACK not in rendered
     assert "сирі збіги" in rendered.casefold()
@@ -703,22 +812,28 @@ def test_pipeline_fallback_mode_escalates_once_for_weak_detail_result(
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("де можна побачити звірят?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "де можна побачити звірят?",
+    )
 
     assert len(interpreter.calls) == 1
     assert [call["query"] for call in retriever.calls] == [
         "де можна побачити звірят?",
         "екскурсія на поні-ферму тварини ранчо",
     ]
-    assert result.plan.intent == "detail"
-    assert result.plan.scope_detection.primary_scope == "park_activities"
-    assert result.plan.retrieval_plan.primary_query == "екскурсія на поні-ферму тварини ранчо"
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.llm_escalation_triggered is True
-    assert result.retrieval_trace.llm_escalation_reason == "no_search_hits"
-    assert result.retrieval_trace.retry_executed is True
-    assert result.retrieval_trace.initial_executed_queries == ("де можна побачити звірят?",)
-    assert result.retrieval_trace.executed_queries == ("екскурсія на поні-ферму тварини ранчо",)
+    assert inspection.route_context.intent == "detail"
+    assert inspection.route_context.scope_detection.primary_scope == "park_activities"
+    assert (
+        inspection.route_context.retrieval_plan.primary_query
+        == "екскурсія на поні-ферму тварини ранчо"
+    )
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.llm_escalation_triggered is True
+    assert inspection.retrieval_trace.llm_escalation_reason == "no_search_hits"
+    assert inspection.retrieval_trace.retry_executed is True
+    assert inspection.retrieval_trace.initial_executed_queries == ("де можна побачити звірят?",)
+    assert inspection.retrieval_trace.executed_queries == ("екскурсія на поні-ферму тварини ранчо",)
     rendered = render_query_answer(result)
     assert "- Поні-ферма" in rendered
 
@@ -765,13 +880,16 @@ def test_pipeline_returns_no_relevant_info_for_unsupported_pricing_topic(
         policy_settings=_disabled_settings(),
     )
 
-    result = pipeline.answer_query("Скільки коштує катання на ковзанах?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Скільки коштує катання на ковзанах?",
+    )
 
-    assert result.summary == NO_RELEVANT_INFO_FALLBACK
-    assert result.blocks == ()
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.renderer_trusted_top_hit is False
-    assert result.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
+    assert result.answer_text == NO_RELEVANT_INFO_FALLBACK
+    assert result.source_section_ids == ()
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.renderer_trusted_top_hit is False
+    assert inspection.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
 
 
 def test_pipeline_forced_mode_still_rejects_unsupported_pricing_topic(
@@ -836,12 +954,15 @@ def test_pipeline_forced_mode_still_rejects_unsupported_pricing_topic(
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("Скільки коштує катання на ковзанах?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "Скільки коштує катання на ковзанах?",
+    )
 
-    assert result.summary == NO_RELEVANT_INFO_FALLBACK
-    assert result.blocks == ()
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
+    assert result.answer_text == NO_RELEVANT_INFO_FALLBACK
+    assert result.source_section_ids == ()
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.renderer_note == "no_specific_query_evidence_in_hits"
 
 
 def test_pipeline_llm_retrieval_plan_tries_alternate_when_primary_is_weak(
@@ -899,14 +1020,17 @@ def test_pipeline_llm_retrieval_plan_tries_alternate_when_primary_is_weak(
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("хто у вас є в зоопарку?")
+    inspection, result = _inspect_and_answer(
+        pipeline,
+        "хто у вас є в зоопарку?",
+    )
 
     assert [call["query"] for call in retriever.calls] == [
         "тварини Berry Land",
         "екскурсія на поні-ферму тварини ранчо",
     ]
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.stop_reason == "planned_queries_exhausted"
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.stop_reason == "planned_queries_exhausted"
     rendered = render_query_answer(result)
     assert "- Поні-ферма" in rendered
 
@@ -964,13 +1088,16 @@ def test_pipeline_stops_after_primary_when_retrieval_is_strong(tmp_path: Path) -
         llm_interpreter=interpreter,
     )
 
-    result = pipeline.answer_query("хто у вас є в зоопарку?")
+    inspection, _result = _inspect_and_answer(
+        pipeline,
+        "хто у вас є в зоопарку?",
+    )
 
     assert [call["query"] for call in retriever.calls] == [
         "екскурсія на поні-ферму тварини ранчо",
     ]
-    assert result.retrieval_trace is not None
-    assert result.retrieval_trace.stop_reason == "primary_top_score_sufficient"
+    assert inspection.retrieval_trace is not None
+    assert inspection.retrieval_trace.stop_reason == "primary_top_score_sufficient"
 
 
 def test_execute_query_plan_broadens_scope_for_low_confidence_scope_detection() -> None:
@@ -991,7 +1118,7 @@ def test_execute_query_plan_broadens_scope_for_low_confidence_scope_detection() 
         ),
     )
     reader = StaticStructureReader(scoped_documents=(), all_documents=(document,))
-    plan = QueryPlan(
+    route_context = QueryRouteContext(
         classification=QueryClassification(
             intent="overview",
             confidence=0.92,
@@ -1013,13 +1140,12 @@ def test_execute_query_plan_broadens_scope_for_low_confidence_scope_detection() 
 
     result = execute_query_plan(
         "Що у вас є?",
-        plan,
+        route_context,
         structure_reader=reader,
-        search_response=None,
     )
 
-    assert result.fallback_used is False
-    assert result.blocks
+    assert result.state == "answered"
+    assert result.source_section_ids
     assert "Додаткові послуги" in render_query_answer(result)
 
 
@@ -1041,7 +1167,7 @@ def test_execute_query_plan_keeps_scope_strict_when_confidence_is_high() -> None
         ),
     )
     reader = StaticStructureReader(scoped_documents=(), all_documents=(document,))
-    plan = QueryPlan(
+    route_context = QueryRouteContext(
         classification=QueryClassification(
             intent="overview",
             confidence=0.92,
@@ -1063,11 +1189,10 @@ def test_execute_query_plan_keeps_scope_strict_when_confidence_is_high() -> None
 
     result = execute_query_plan(
         "Що у вас є?",
-        plan,
+        route_context,
         structure_reader=reader,
-        search_response=None,
     )
 
-    assert result.fallback_used is True
-    assert result.blocks == ()
-    assert result.summary == NO_RELEVANT_INFO_FALLBACK
+    assert result.state == "fallback"
+    assert result.source_section_ids == ()
+    assert result.answer_text == NO_RELEVANT_INFO_FALLBACK

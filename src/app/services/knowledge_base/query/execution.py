@@ -1,10 +1,12 @@
-﻿# ruff: noqa: RUF001
+# ruff: noqa: RUF001
 
 from __future__ import annotations
 
 import logging
 import re
 
+from app.services.knowledge_base.query.answering_models import AnswerDraft
+from app.services.knowledge_base.query.dto import AnswerResult, VectorHit
 from app.services.knowledge_base.query.execution_strategies import (
     build_comparison_result,
     build_enumeration_result,
@@ -13,9 +15,7 @@ from app.services.knowledge_base.query.execution_strategies import (
     document_support,
     extract_section_items,
 )
-from app.services.knowledge_base.query.execution_trace import (
-    with_retrieval_trace as _with_retrieval_trace,
-)
+from app.services.knowledge_base.query.renderer import AnswerBlock
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
 from app.services.knowledge_base.query.text import (
     normalize_query_text,
@@ -25,20 +25,13 @@ from app.services.knowledge_base.query.text import (
     tokenize_text,
 )
 from app.services.knowledge_base.query.types import (
-    AnswerBlock,
-    QueryAnswerResult,
-    QueryPlan,
     QueryRetrievalExecutionTrace,
+    QueryRouteContext,
     SearchHitDebugContext,
     StructuredDocument,
     StructuredSection,
 )
-from app.services.knowledge_base.types_openai import (
-    NO_RELEVANT_INFO_FALLBACK,
-    SearchHit,
-    SearchResponse,
-)
-from app.services.knowledge_base.utils import search_hit_logical_id
+from app.services.knowledge_base.types_openai import NO_RELEVANT_INFO_FALLBACK
 
 logger = logging.getLogger(__name__)
 
@@ -131,15 +124,16 @@ MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING = 0.7
 MIN_RETRIEVAL_SUPPORT_COVERAGE = 0.5
 
 
-def execute_query_plan(
+def execute_query_answer(
     query: str,
-    plan: QueryPlan,
+    route_context: QueryRouteContext,
     *,
     structure_reader: KnowledgeBaseStructureReader,
-    search_response: SearchResponse | None = None,
+    vector_hits: tuple[VectorHit, ...] = (),
     retrieval_trace: QueryRetrievalExecutionTrace | None = None,
-) -> QueryAnswerResult:
-    documents, broadened_scope = _resolve_documents_for_plan(plan, structure_reader)
+    fallback_message: str | None = None,
+) -> tuple[AnswerResult, QueryRetrievalExecutionTrace | None]:
+    documents, broadened_scope = _resolve_documents_for_route(route_context, structure_reader)
     logger.debug(
         (
             "%s query=%r intent=%s scope=%s strategy=%s "
@@ -148,75 +142,90 @@ def execute_query_plan(
         ),
         LOG_EVENT_QUERY_EXECUTION,
         query,
-        plan.intent,
-        plan.scope_detection.primary_scope,
-        plan.strategy,
+        route_context.intent,
+        route_context.scope_detection.primary_scope,
+        route_context.strategy,
         len(documents),
         broadened_scope,
-        len(search_response.results) if search_response is not None else 0,
+        len(vector_hits),
         structure_reader.manifest_path.as_posix(),
     )
-    detail_result = None
+    detail_draft = None
     detail_attempted = False
+    trace = retrieval_trace
 
-    if plan.strategy == "enumeration_catalog":
-        result = build_enumeration_result(plan, documents)
-        if result is not None:
-            if result.retrieval_trace is None:
-                result = _with_retrieval_trace(result, retrieval_trace)
-            return result
-    elif plan.strategy == "overview_summary":
-        result = build_overview_result(plan, documents)
-        if result is not None:
-            if result.retrieval_trace is None:
-                result = _with_retrieval_trace(result, retrieval_trace)
-            return result
-    elif plan.strategy == "comparison_summary":
-        result = build_comparison_result(plan, query, documents, search_response)
-        if result is not None:
-            if result.retrieval_trace is None:
-                result = _with_retrieval_trace(result, retrieval_trace)
-            return result
-    elif plan.strategy == "detail_retrieval":
+    if route_context.strategy == "enumeration_catalog":
+        draft = build_enumeration_result(route_context, documents)
+        if draft is not None:
+            return draft.to_answer_result(), trace
+    elif route_context.strategy == "overview_summary":
+        draft = build_overview_result(route_context, documents)
+        if draft is not None:
+            return draft.to_answer_result(), trace
+    elif route_context.strategy == "comparison_summary":
+        draft = build_comparison_result(route_context, query, documents, vector_hits)
+        if draft is not None:
+            return draft.to_answer_result(), trace
+    elif route_context.strategy == "detail_retrieval":
         detail_attempted = True
-        detail_result = _build_detail_result(
-            plan,
+        detail_draft, trace = _build_detail_result(
+            route_context,
             query,
             documents,
-            search_response,
+            vector_hits,
             structure_reader=structure_reader,
-            retrieval_trace=retrieval_trace,
+            retrieval_trace=trace,
+            fallback_message=fallback_message,
         )
-        if detail_result is not None:
-            return detail_result
+        if detail_draft is not None:
+            return detail_draft.to_answer_result(), trace
 
-    result = _build_safe_fallback_result(
-        plan,
+    draft, trace = _build_safe_fallback_result(
+        route_context,
         query,
         documents,
-        search_response,
+        vector_hits,
         structure_reader=structure_reader,
-        detail_result=detail_result,
+        fallback_message=fallback_message,
+        detail_draft=detail_draft,
         detail_attempted=detail_attempted,
-        retrieval_trace=retrieval_trace,
+        retrieval_trace=trace,
     )
-    if result.retrieval_trace is None:
-        result = _with_retrieval_trace(result, retrieval_trace)
-    return result
+    return draft.to_answer_result(), trace
 
 
-def _resolve_documents_for_plan(
-    plan: QueryPlan,
+def execute_query_plan(
+    query: str,
+    route_context: QueryRouteContext,
+    *,
+    structure_reader: KnowledgeBaseStructureReader,
+    vector_hits: tuple[VectorHit, ...] = (),
+    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
+    fallback_message: str | None = None,
+) -> AnswerResult:
+    answer_result, _ = execute_query_answer(
+        query,
+        route_context,
+        structure_reader=structure_reader,
+        vector_hits=vector_hits,
+        retrieval_trace=retrieval_trace,
+        fallback_message=fallback_message,
+    )
+    return answer_result
+
+
+def _resolve_documents_for_route(
+    route_context: QueryRouteContext,
     structure_reader: KnowledgeBaseStructureReader,
 ) -> tuple[tuple[StructuredDocument, ...], bool]:
-    if not plan.needs_structure:
+    if not route_context.needs_structure:
         return (), False
 
-    scoped_documents = structure_reader.documents_for_scopes(plan.scope_detection.scopes)
+    scoped_documents = structure_reader.documents_for_scopes(route_context.scope_detection.scopes)
     if scoped_documents:
         return scoped_documents, False
 
-    if not _should_broaden_document_scope(plan):
+    if not _should_broaden_document_scope(route_context):
         return (), False
 
     all_documents = structure_reader.load_documents()
@@ -225,79 +234,76 @@ def _resolve_documents_for_plan(
     return all_documents, True
 
 
-def _should_broaden_document_scope(plan: QueryPlan) -> bool:
-    if "general" in plan.scope_detection.scopes:
+def _should_broaden_document_scope(route_context: QueryRouteContext) -> bool:
+    if "general" in route_context.scope_detection.scopes:
         return True
-    if plan.intent == "unknown":
+    if route_context.intent == "unknown":
         return True
-    if plan.scope_detection.source == "default":
+    if route_context.scope_detection.source == "default":
         return True
 
-    threshold = plan.policy_trace.rules_min_confidence
-    if threshold > 0 and plan.scope_detection.confidence < threshold:
+    threshold = route_context.policy_trace.rules_min_confidence
+    if threshold > 0 and route_context.scope_detection.confidence < threshold:
         return True
     return False
 
 
 def _build_detail_result(
-    plan: QueryPlan,
+    route_context: QueryRouteContext,
     query: str,
     documents: tuple[StructuredDocument, ...],
-    search_response: SearchResponse | None,
+    vector_hits: tuple[VectorHit, ...],
     *,
     structure_reader: KnowledgeBaseStructureReader,
-    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
-) -> QueryAnswerResult | None:
-    if search_response is None:
-        logger.debug("%s reason=no_search_response", LOG_EVENT_DETAIL_RESULT_SKIPPED)
-        return None
-    if not search_response.results:
-        logger.debug("%s reason=no_search_hits", LOG_EVENT_DETAIL_RESULT_SKIPPED)
-        return None
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+    fallback_message: str | None,
+) -> tuple[AnswerDraft | None, QueryRetrievalExecutionTrace | None]:
+    if not vector_hits:
+        logger.debug("%s reason=no_vector_hits", LOG_EVENT_DETAIL_RESULT_SKIPPED)
+        return None, retrieval_trace
     if not documents:
-        _log_structure_mapping(search_response, {}, structure_reader)
+        _log_structure_mapping(vector_hits, {}, structure_reader)
         logger.debug("%s reason=no_structured_documents", LOG_EVENT_DETAIL_RESULT_SKIPPED)
-        return None
+        return None, retrieval_trace
 
     query_text = normalize_query_text(query)
     query_tokens = tokenize_text(query)
     detail_facet = _detect_detail_facet(query_text)
     ranking_tokens = (
-        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(plan))))
-        if _should_expand_ranking_tokens(plan)
+        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(route_context))))
+        if _should_expand_ranking_tokens(route_context)
         else query_tokens
     )
-    support = document_support(search_response)
+    support = document_support(vector_hits)
     documents_by_id = {document.logical_id: document for document in documents}
-    _log_structure_mapping(search_response, documents_by_id, structure_reader)
-    if not _search_response_supports_query(
-        search_response,
-        plan,
+    _log_structure_mapping(vector_hits, documents_by_id, structure_reader)
+    if not _vector_hits_support_query(
+        vector_hits,
+        route_context,
         query_tokens,
         documents_by_id,
     ):
-        unsupported_result = QueryAnswerResult(
-            plan=plan,
-            summary=NO_RELEVANT_INFO_FALLBACK,
+        unsupported_result = AnswerDraft(
+            summary=fallback_message or NO_RELEVANT_INFO_FALLBACK,
             blocks=(),
             sources=(),
-            search_response=search_response,
-            fallback_used=True,
+            state="fallback",
+            debug_reason="no_specific_query_evidence_in_hits",
         )
-        return _with_retrieval_trace(
-            unsupported_result,
+        return unsupported_result, _with_renderer_trace(
             retrieval_trace,
             trusted_top_hit=False,
             note="no_specific_query_evidence_in_hits",
         )
+
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
     seen_block_keys: set[tuple[str, tuple[str, ...] | str]] = set()
     trusted_top_hit = False
     renderer_note = "no_hit_anchored_block"
 
-    for index, hit in enumerate(search_response.results):
-        logical_id = search_hit_logical_id(hit)
+    for index, hit in enumerate(vector_hits):
+        logical_id = _vector_hit_logical_id(hit)
         document = documents_by_id.get(logical_id)
         hit_context = _resolve_hit_context(structure_reader, hit)
         block = None
@@ -343,18 +349,15 @@ def _build_detail_result(
             break
 
     if not blocks:
-        return None
+        return None, retrieval_trace
 
-    result = QueryAnswerResult(
-        plan=plan,
+    draft = AnswerDraft(
         summary="Знайшов найближчі розділи:",
         blocks=tuple(blocks),
         sources=tuple(dedupe(sources)),
-        search_response=search_response,
-        fallback_used=False,
+        debug_reason=renderer_note,
     )
-    return _with_retrieval_trace(
-        result,
+    return draft, _with_renderer_trace(
         retrieval_trace,
         trusted_top_hit=trusted_top_hit,
         note=renderer_note,
@@ -362,84 +365,83 @@ def _build_detail_result(
 
 
 def _build_safe_fallback_result(
-    plan: QueryPlan,
+    route_context: QueryRouteContext,
     query: str,
     documents: tuple[StructuredDocument, ...],
-    search_response: SearchResponse | None,
+    vector_hits: tuple[VectorHit, ...],
     *,
     structure_reader: KnowledgeBaseStructureReader,
-    detail_result: QueryAnswerResult | None = None,
-    detail_attempted: bool = False,
-    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
-) -> QueryAnswerResult:
+    fallback_message: str | None,
+    detail_draft: AnswerDraft | None,
+    detail_attempted: bool,
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+) -> tuple[AnswerDraft, QueryRetrievalExecutionTrace | None]:
+    resolved_fallback = fallback_message or NO_RELEVANT_INFO_FALLBACK
+
     if (
-        plan.needs_structure
+        route_context.needs_structure
         and not documents
-        and not _should_broaden_document_scope(plan)
+        and not _should_broaden_document_scope(route_context)
         and structure_reader.load_documents()
     ):
-        fallback_message = NO_RELEVANT_INFO_FALLBACK
-        if search_response is not None and search_response.fallback_message:
-            fallback_message = search_response.fallback_message
-        result = QueryAnswerResult(
-            plan=plan,
-            summary=fallback_message,
+        draft = AnswerDraft(
+            summary=resolved_fallback,
             blocks=(),
             sources=(),
-            search_response=search_response,
-            fallback_used=True,
+            state="fallback",
+            debug_reason="no_specific_query_evidence_in_hits",
         )
-        return _with_retrieval_trace(
-            result,
+        return draft, _with_renderer_trace(
             retrieval_trace,
             trusted_top_hit=False,
             note="no_specific_query_evidence_in_hits",
         )
 
-    if detail_result is None and not detail_attempted:
-        detail_result = _build_detail_result(
-            plan,
+    if detail_draft is None and not detail_attempted:
+        detail_draft, retrieval_trace = _build_detail_result(
+            route_context,
             query,
             documents,
-            search_response,
+            vector_hits,
             structure_reader=structure_reader,
             retrieval_trace=retrieval_trace,
+            fallback_message=resolved_fallback,
         )
-    if detail_result is not None:
-        if not detail_result.blocks and detail_result.summary == NO_RELEVANT_INFO_FALLBACK:
-            return detail_result
-        return QueryAnswerResult(
-            plan=plan,
-            summary="Не вдалося впевнено класифікувати запит. Показую найближчі розділи:",
-            blocks=detail_result.blocks,
-            sources=detail_result.sources,
-            search_response=search_response,
-            fallback_used=True,
-            retrieval_trace=detail_result.retrieval_trace,
+    if detail_draft is not None:
+        if not detail_draft.blocks and detail_draft.state == "fallback":
+            return detail_draft, retrieval_trace
+        return (
+            AnswerDraft(
+                summary="Не вдалося впевнено класифікувати запит. Показую найближчі розділи:",
+                blocks=detail_draft.blocks,
+                sources=detail_draft.sources,
+                state="fallback",
+                debug_reason=detail_draft.debug_reason,
+            ),
+            retrieval_trace,
         )
 
-    raw_hit_result = _build_raw_hit_fallback_result(
-        plan,
+    raw_hit_result, retrieval_trace = _build_raw_hit_fallback_result(
+        route_context,
         query,
-        search_response,
+        vector_hits,
         structure_reader=structure_reader,
         retrieval_trace=retrieval_trace,
     )
     if raw_hit_result is not None:
-        return raw_hit_result
+        return raw_hit_result, retrieval_trace
 
-    fallback_message = NO_RELEVANT_INFO_FALLBACK
-    if search_response is not None and search_response.fallback_message:
-        fallback_message = search_response.fallback_message
-
-    return QueryAnswerResult(
-        plan=plan,
-        summary=fallback_message,
-        blocks=(),
-        sources=(),
-        search_response=search_response,
-        fallback_used=True,
+    return (
+        AnswerDraft(
+            summary=resolved_fallback,
+            blocks=(),
+            sources=(),
+            state="fallback",
+            debug_reason="fallback_used",
+        ),
+        retrieval_trace,
     )
+
 
 def _detail_block(
     document: StructuredDocument,
@@ -468,21 +470,21 @@ def _detail_block(
 
 
 def _build_raw_hit_fallback_result(
-    plan: QueryPlan,
+    route_context: QueryRouteContext,
     query: str,
-    search_response: SearchResponse | None,
+    vector_hits: tuple[VectorHit, ...],
     *,
     structure_reader: KnowledgeBaseStructureReader,
-    retrieval_trace: QueryRetrievalExecutionTrace | None = None,
-) -> QueryAnswerResult | None:
-    if search_response is None or not search_response.results:
-        return None
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+) -> tuple[AnswerDraft | None, QueryRetrievalExecutionTrace | None]:
+    if not vector_hits:
+        return None, retrieval_trace
 
     query_tokens = tokenize_text(query)
     detail_facet = _detect_detail_facet(normalize_query_text(query))
     ranking_tokens = (
-        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(plan))))
-        if _should_expand_ranking_tokens(plan)
+        tuple(dict.fromkeys((*query_tokens, *_retrieval_ranking_tokens(route_context))))
+        if _should_expand_ranking_tokens(route_context)
         else query_tokens
     )
     blocks: list[AnswerBlock] = []
@@ -491,8 +493,8 @@ def _build_raw_hit_fallback_result(
     trusted_top_hit = False
     renderer_note = "no_raw_hit_lines"
 
-    for hit in search_response.results:
-        logical_id = search_hit_logical_id(hit)
+    for hit in vector_hits:
+        logical_id = _vector_hit_logical_id(hit)
         hit_context = _resolve_hit_context(structure_reader, hit)
         title = _raw_hit_title(hit, hit_context)
         block_key = (logical_id, title)
@@ -518,7 +520,7 @@ def _build_raw_hit_fallback_result(
             break
 
     if not blocks:
-        return None
+        return None, retrieval_trace
 
     logger.debug(
         "%s block_count=%s source_count=%s",
@@ -526,16 +528,14 @@ def _build_raw_hit_fallback_result(
         len(blocks),
         len(dedupe(sources)),
     )
-    result = QueryAnswerResult(
-        plan=plan,
+    draft = AnswerDraft(
         summary="Не вдалося побудувати структуровану відповідь. Показую найближчі сирі збіги:",
         blocks=tuple(blocks),
         sources=tuple(dedupe(sources)),
-        search_response=search_response,
-        fallback_used=True,
+        state="fallback",
+        debug_reason=renderer_note,
     )
-    return _with_retrieval_trace(
-        result,
+    return draft, _with_renderer_trace(
         retrieval_trace,
         trusted_top_hit=trusted_top_hit,
         note=renderer_note,
@@ -562,12 +562,12 @@ def _score_section(
 
 
 def _log_structure_mapping(
-    search_response: SearchResponse,
+    vector_hits: tuple[VectorHit, ...],
     documents_by_id: dict[str, StructuredDocument],
     structure_reader: KnowledgeBaseStructureReader,
 ) -> None:
-    for hit in search_response.results:
-        logical_id = search_hit_logical_id(hit)
+    for hit in vector_hits:
+        logical_id = _vector_hit_logical_id(hit)
         hit_context = _resolve_hit_context(structure_reader, hit)
         logger.debug(
             "%s logical_id=%s scoped_document=%s context_resolved=%s heading_path=%s",
@@ -581,15 +581,15 @@ def _log_structure_mapping(
 
 def _resolve_hit_context(
     structure_reader: KnowledgeBaseStructureReader,
-    hit: SearchHit,
+    hit: VectorHit,
 ) -> SearchHitDebugContext | None:
     try:
-        return structure_reader.resolve_hit_context(hit)
+        return structure_reader.resolve_vector_hit_context(hit)
     except Exception:
         logger.debug(
             "%s logical_id=%s resolution_failed=True",
             LOG_EVENT_STRUCTURE_MAPPING,
-            search_hit_logical_id(hit),
+            _vector_hit_logical_id(hit),
             exc_info=True,
         )
         return None
@@ -633,35 +633,36 @@ def _rank_hit_lines(
     return fallback_lines[:2]
 
 
-def _raw_hit_title(hit: SearchHit, hit_context: SearchHitDebugContext | None) -> str:
+def _raw_hit_title(hit: VectorHit, hit_context: SearchHitDebugContext | None) -> str:
     if hit_context is not None and hit_context.heading_path:
         return " > ".join(hit_context.heading_path)
     if hit_context is not None and hit_context.document_title:
         return hit_context.document_title
-    return hit.filename
+    filename = str(hit.attributes.get("filename", "")).strip()
+    return filename or hit.section_id
 
 
-def _retrieval_ranking_tokens(plan: QueryPlan) -> tuple[str, ...]:
+def _retrieval_ranking_tokens(route_context: QueryRouteContext) -> tuple[str, ...]:
     token_source = "\n".join(
         (
-            plan.retrieval_plan.primary_query,
-            "\n".join(plan.retrieval_plan.alternate_queries),
-            "\n".join(plan.retrieval_plan.keywords),
+            route_context.retrieval_plan.primary_query,
+            "\n".join(route_context.retrieval_plan.alternate_queries),
+            "\n".join(route_context.retrieval_plan.keywords),
         )
     )
     return tokenize_text(token_source)
 
 
-def _should_expand_ranking_tokens(plan: QueryPlan) -> bool:
+def _should_expand_ranking_tokens(route_context: QueryRouteContext) -> bool:
     return (
-        plan.policy_trace.mode == "forced"
-        or plan.retrieval_plan.confidence >= MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING
+        route_context.policy_trace.mode == "forced"
+        or route_context.retrieval_plan.confidence >= MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING
     )
 
 
-def _search_response_supports_query(
-    search_response: SearchResponse,
-    plan: QueryPlan,
+def _vector_hits_support_query(
+    vector_hits: tuple[VectorHit, ...],
+    route_context: QueryRouteContext,
     query_tokens: tuple[str, ...],
     documents_by_id: dict[str, StructuredDocument],
 ) -> bool:
@@ -669,20 +670,20 @@ def _search_response_supports_query(
     if not content_tokens:
         return True
 
-    search_tokens = _search_response_tokens(search_response, documents_by_id)
+    search_tokens = _vector_hit_tokens(vector_hits, documents_by_id)
     query_coverage = _token_coverage(content_tokens, search_tokens)
     if query_coverage >= 1.0:
         return True
 
-    if plan.retrieval_plan.confidence < MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING:
+    if route_context.retrieval_plan.confidence < MIN_RETRIEVAL_QUERY_CONFIDENCE_FOR_RANKING:
         return False
 
     retrieval_tokens = _content_support_tokens(
-        tokenize_text("\n".join(plan.retrieval_plan.keywords))
+        tokenize_text("\n".join(route_context.retrieval_plan.keywords))
     )
     if not retrieval_tokens:
         retrieval_tokens = _content_support_tokens(
-            tokenize_text("\n".join(plan.retrieval_plan.alternate_queries))
+            tokenize_text("\n".join(route_context.retrieval_plan.alternate_queries))
         )
     if not retrieval_tokens:
         return False
@@ -699,15 +700,16 @@ def _content_support_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
-def _search_response_tokens(
-    search_response: SearchResponse,
+def _vector_hit_tokens(
+    vector_hits: tuple[VectorHit, ...],
     documents_by_id: dict[str, StructuredDocument],
 ) -> set[str]:
     tokens: set[str] = set()
     document_tokens: dict[str, set[str]] = {}
-    for hit in search_response.results[:5]:
-        tokens.update(tokenize_text(f"{hit.filename}\n{hit.text}"))
-        document = documents_by_id.get(search_hit_logical_id(hit))
+    for hit in vector_hits[:5]:
+        filename = str(hit.attributes.get("filename", ""))
+        tokens.update(tokenize_text(f"{filename}\n{hit.text}"))
+        document = documents_by_id.get(_vector_hit_logical_id(hit))
         if document is None:
             continue
         cached = document_tokens.get(document.logical_id)
@@ -760,7 +762,7 @@ def _select_best_section_for_hit(
 
 
 def _raw_hit_detail_block(
-    hit: SearchHit,
+    hit: VectorHit,
     *,
     raw_title: str,
     query_tokens: tuple[str, ...],
@@ -876,3 +878,43 @@ def _hit_anchor_bonus(
     if section_path[:1] == hit_path[:1]:
         return 2
     return 0
+
+
+def _vector_hit_logical_id(hit: VectorHit) -> str:
+    logical_id = str(hit.attributes.get("logical_id", "")).strip()
+    if logical_id:
+        return logical_id
+    return hit.section_id.split(":", maxsplit=1)[0]
+
+
+def _with_renderer_trace(
+    retrieval_trace: QueryRetrievalExecutionTrace | None,
+    *,
+    trusted_top_hit: bool | None,
+    note: str | None,
+) -> QueryRetrievalExecutionTrace | None:
+    if retrieval_trace is None:
+        return None
+    return QueryRetrievalExecutionTrace(
+        initial_planned_queries=retrieval_trace.initial_planned_queries,
+        initial_executed_queries=retrieval_trace.initial_executed_queries,
+        initial_result_count=retrieval_trace.initial_result_count,
+        initial_top_score=retrieval_trace.initial_top_score,
+        initial_stop_reason=retrieval_trace.initial_stop_reason,
+        llm_escalation_triggered=retrieval_trace.llm_escalation_triggered,
+        llm_escalation_reason=retrieval_trace.llm_escalation_reason,
+        retry_executed=retrieval_trace.retry_executed,
+        planned_queries=retrieval_trace.planned_queries,
+        executed_queries=retrieval_trace.executed_queries,
+        retry_result_count=retrieval_trace.retry_result_count,
+        retry_top_score=retrieval_trace.retry_top_score,
+        merged_raw_hit_count=retrieval_trace.merged_raw_hit_count,
+        merged_result_count=retrieval_trace.merged_result_count,
+        stop_reason=retrieval_trace.stop_reason,
+        renderer_trusted_top_hit=(
+            trusted_top_hit
+            if trusted_top_hit is not None
+            else retrieval_trace.renderer_trusted_top_hit
+        ),
+        renderer_note=note if note is not None else retrieval_trace.renderer_note,
+    )

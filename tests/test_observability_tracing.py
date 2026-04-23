@@ -20,9 +20,9 @@ from app.observability import (
 from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
 from app.services.knowledge_base.query.types import (
     QueryClassification,
-    QueryPlan,
     QueryPolicyTrace,
     QueryRetrievalPlan,
+    QueryRouteContext,
     QueryScopeDetection,
     QueryStageToggles,
     SearchHitDebugContext,
@@ -44,21 +44,21 @@ class FakeTraceAwareHandler:
 
 
 class StaticQueryPolicy:
-    def __init__(self, plan: QueryPlan) -> None:
-        self._plan = plan
+    def __init__(self, route_context: QueryRouteContext) -> None:
+        self._route_context = route_context
         self.settings = SimpleNamespace(
             kb_query_llm_mode="forced",
             kb_query_llm_max_retrieval_variants=1,
         )
 
-    def resolve_query_plan(
+    def resolve_query_route(
         self,
         query: str,
         *,
         llm_mode_override=None,
-    ) -> QueryPlan:
+    ) -> QueryRouteContext:
         del query, llm_mode_override
-        return self._plan
+        return self._route_context
 
 
 class SuccessfulRetriever:
@@ -122,6 +122,15 @@ class FakeStructureReader:
             heading_path=("Berry FAQ", "Hours"),
         )
 
+    def resolve_vector_hit_context(self, hit) -> SearchHitDebugContext:
+        del hit
+        return SearchHitDebugContext(
+            logical_id="berry-faq",
+            source_file="berry.md",
+            document_title="Berry FAQ",
+            heading_path=("Berry FAQ", "Hours"),
+        )
+
 
 def test_trace_context_middleware_reuses_x_request_id() -> None:
     middleware = TraceContextMiddleware()
@@ -167,11 +176,7 @@ def test_trace_context_middleware_logs_user_and_chat_metadata() -> None:
         middleware_logger.propagate = previous_propagate
 
     assert result == "handled"
-    log_lines = [
-        json.loads(line)
-        for line in stream.getvalue().splitlines()
-        if line.strip()
-    ]
+    log_lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.strip()]
     request_logs = [
         line
         for line in log_lines
@@ -204,7 +209,7 @@ def test_pipeline_smoke_logs_trace_id_and_stage_spans() -> None:
         rationale=("Use the raw query for deterministic retrieval.",),
     )
     stage_toggles = QueryStageToggles()
-    plan = QueryPlan(
+    route_context = QueryRouteContext(
         classification=classification,
         scope_detection=scope,
         strategy="detail_retrieval",
@@ -232,7 +237,7 @@ def test_pipeline_smoke_logs_trace_id_and_stage_spans() -> None:
     pipeline = KnowledgeBaseQueryPipeline(
         retriever=retriever,
         structure_reader=FakeStructureReader(),
-        query_policy=StaticQueryPolicy(plan),
+        query_policy=StaticQueryPolicy(route_context),
     )
 
     stream = io.StringIO()
@@ -262,18 +267,10 @@ def test_pipeline_smoke_logs_trace_id_and_stage_spans() -> None:
             "attribute_filters": None,
         }
     ]
-    assert result.summary is not None
+    assert result.answer_text
 
-    log_lines = [
-        json.loads(line)
-        for line in stream.getvalue().splitlines()
-        if line.strip()
-    ]
-    span_logs = [
-        line
-        for line in log_lines
-        if line.get("event") == LOG_EVENT_TRACE_SPAN
-    ]
+    log_lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.strip()]
+    span_logs = [line for line in log_lines if line.get("event") == LOG_EVENT_TRACE_SPAN]
 
     assert len(span_logs) >= 3
     assert {line["trace_id"] for line in span_logs} == {"trace-smoke-test"}

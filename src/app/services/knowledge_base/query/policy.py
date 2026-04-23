@@ -18,7 +18,7 @@ from app.services.knowledge_base.query.llm import (
 )
 from app.services.knowledge_base.query.planner import (
     build_query_plan_with_strategy,
-    strategy_for_intent,
+    strategy_for_query,
     strategy_matches_intent,
     strategy_requirements,
 )
@@ -33,9 +33,9 @@ from app.services.knowledge_base.query.types import (
     QueryDecisionSource,
     QueryInterpretationStage,
     QueryLLMMode,
-    QueryPlan,
     QueryPolicyTrace,
     QueryRetrievalPlan,
+    QueryRouteContext,
     QueryScopeDetection,
     QueryStrategy,
 )
@@ -96,12 +96,12 @@ class KnowledgeBaseQueryPolicy:
     def settings(self) -> KnowledgeBaseQuerySettings:
         return self._settings
 
-    def resolve_query_plan(
+    def resolve_query_route(
         self,
         query: str,
         *,
         llm_mode_override: QueryLLMMode | None = None,
-    ) -> QueryPlan:
+    ) -> QueryRouteContext:
         llm_mode = llm_mode_override or self._settings.kb_query_llm_mode
         stage_toggles = self._settings.stage_toggles
 
@@ -154,7 +154,7 @@ class KnowledgeBaseQueryPolicy:
         if not stage_toggles.planner_enabled and final.strategy_source == "default":
             rationale.append("Planner stage is disabled; using safe fallback strategy.")
 
-        plan = QueryPlan(
+        plan = QueryRouteContext(
             classification=base_plan.classification,
             scope_detection=base_plan.scope_detection,
             strategy=base_plan.strategy,
@@ -205,7 +205,7 @@ class KnowledgeBaseQueryPolicy:
             else _default_scope("Scope stage disabled by configuration.")
         )
         strategy = (
-            strategy_for_intent(classification.intent)
+            strategy_for_query(query, classification, scope)
             if stage_toggles.planner_enabled
             else "safe_fallback"
         )
@@ -332,7 +332,7 @@ class KnowledgeBaseQueryPolicy:
             final_scope_source = "llm"
 
         if stage_toggles.planner_enabled:
-            final_strategy = strategy_for_intent(final_classification.intent)
+            final_strategy = strategy_for_query(query, final_classification, final_scope)
             final_strategy_source = "rules"
         else:
             final_strategy = "safe_fallback"
@@ -407,13 +407,10 @@ class KnowledgeBaseQueryPolicy:
             planner_needed = "planner" in allowed
             retrieval_needed = "retrieval" in allowed and stage_toggles.retrieval_enabled
         else:
-            classifier_needed = (
-                "classifier" in allowed
-                and (
-                    not stage_toggles.rules_enabled
-                    or deterministic_classification.intent == "unknown"
-                    or deterministic_classification.confidence < threshold
-                )
+            classifier_needed = "classifier" in allowed and (
+                not stage_toggles.rules_enabled
+                or deterministic_classification.intent == "unknown"
+                or deterministic_classification.confidence < threshold
             )
             scope_needed = "scope" in allowed and (
                 not stage_toggles.scope_enabled
@@ -438,16 +435,20 @@ class KnowledgeBaseQueryPolicy:
                 or classifier_needed
                 or scope_needed
             )
-            retrieval_needed = "retrieval" in allowed and stage_toggles.retrieval_enabled and (
-                classifier_needed
-                or scope_needed
-                or planner_needed
-                or (
-                    strategy_requirements(deterministic_strategy)[0]
-                    and (
-                        deterministic_scope.primary_scope == "general"
-                        or deterministic_scope.confidence < threshold
-                        or _is_baseline_retrieval_plan(deterministic_retrieval_plan)
+            retrieval_needed = (
+                "retrieval" in allowed
+                and stage_toggles.retrieval_enabled
+                and (
+                    classifier_needed
+                    or scope_needed
+                    or planner_needed
+                    or (
+                        strategy_requirements(deterministic_strategy)[0]
+                        and (
+                            deterministic_scope.primary_scope == "general"
+                            or deterministic_scope.confidence < threshold
+                            or _is_baseline_retrieval_plan(deterministic_retrieval_plan)
+                        )
                     )
                 )
             )
@@ -608,8 +609,4 @@ def _combine_reason(existing: str | None, new_reason: str) -> str:
 
 
 def _is_baseline_retrieval_plan(plan: QueryRetrievalPlan) -> bool:
-    return (
-        plan.confidence <= 0.0
-        and not plan.alternate_queries
-        and not plan.keywords
-    )
+    return plan.confidence <= 0.0 and not plan.alternate_queries and not plan.keywords

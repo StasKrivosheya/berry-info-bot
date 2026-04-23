@@ -1,8 +1,8 @@
-# ruff: noqa: RUF001
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from aiogram.filters import CommandObject
@@ -14,16 +14,22 @@ from app.bot.handlers.debug.vector_search_debug import (
     format_search_messages,
     split_for_telegram,
 )
+from app.services.knowledge_base.query.dto import (
+    AnswerResult,
+    NormalizedQuery,
+    RewriteResult,
+    RouterDecision,
+)
 from app.services.knowledge_base.query.types import (
-    AnswerBlock,
-    QueryAnswerResult,
     QueryClassification,
-    QueryPlan,
+    QueryInspectionResult,
     QueryPolicyTrace,
     QueryRetrievalExecutionTrace,
     QueryRetrievalPlan,
+    QueryRouteContext,
     QueryScopeDetection,
     QueryStageToggles,
+    RuleMatch,
     SearchHitDebugContext,
 )
 from app.services.knowledge_base.types_openai import SearchHit, SearchResponse
@@ -85,43 +91,51 @@ class FakeStructureReader:
 class SuccessfulPipeline:
     def __init__(self) -> None:
         self.classify_calls: list[str] = []
-        self.plan_calls: list[str] = []
-        self.answer_calls: list[tuple[str, dict[str, object]]] = []
-
-    def classify_query(self, query: str) -> QueryClassification:
-        self.classify_calls.append(query)
-        return QueryClassification(
+        self.inspect_calls: list[tuple[str, dict[str, object]]] = []
+        self._classification = QueryClassification(
             intent="enumeration",
             confidence=0.99,
+            matched_rules=(
+                RuleMatch(
+                    rule_id="enumeration_program_types",
+                    priority=100,
+                    description="Program list request",
+                    evidence=("program list",),
+                ),
+            ),
             rationale=("Explicit request for program list/types",),
         )
-
-    def plan_query(self, query: str) -> QueryPlan:
-        self.plan_calls.append(query)
-        classification = self.classify_query(query)
-        scope_detection = QueryScopeDetection(
+        self._scope_detection = QueryScopeDetection(
             primary_scope="programs",
             scopes=("programs",),
             confidence=0.95,
+            matched_rules=(
+                RuleMatch(
+                    rule_id="scope_programs",
+                    priority=90,
+                    description="Program-focused scope",
+                    evidence=("program",),
+                ),
+            ),
             rationale=("Program catalog or organized program terms",),
         )
-        retrieval_plan = QueryRetrievalPlan(
-            primary_query="організовані програми",
+        self._retrieval_plan = QueryRetrievalPlan(
+            primary_query="organized programs",
             alternate_queries=(),
-            keywords=("організовані програми",),
+            keywords=("organized programs",),
             confidence=0.65,
             source="rules",
             rationale=("Using the raw query as the deterministic retrieval baseline.",),
         )
-        policy_trace = QueryPolicyTrace(
+        self._policy_trace = QueryPolicyTrace(
             mode="fallback",
             llm_allowed_for=("classifier", "scope", "planner", "retrieval"),
             stage_toggles=QueryStageToggles(),
             rules_min_confidence=0.85,
-            deterministic_classification=classification,
-            deterministic_scope_detection=scope_detection,
+            deterministic_classification=self._classification,
+            deterministic_scope_detection=self._scope_detection,
             deterministic_strategy="enumeration_catalog",
-            deterministic_retrieval_plan=retrieval_plan,
+            deterministic_retrieval_plan=self._retrieval_plan,
             final_intent_source="rules",
             final_scope_source="rules",
             final_strategy_source="rules",
@@ -131,35 +145,88 @@ class SuccessfulPipeline:
             llm_cache_hit=False,
             llm_skip_reason="deterministic_pipeline_sufficient",
         )
-        return QueryPlan(
-            classification=classification,
-            scope_detection=scope_detection,
+
+    def classify_query(self, query: str) -> QueryClassification:
+        self.classify_calls.append(query)
+        return self._classification
+
+    def inspect_query(self, query: str, **kwargs: object) -> QueryInspectionResult:
+        self.inspect_calls.append((query, kwargs))
+        route_context = QueryRouteContext(
+            classification=self._classification,
+            scope_detection=self._scope_detection,
             strategy="enumeration_catalog",
-            retrieval_plan=retrieval_plan,
+            retrieval_plan=self._retrieval_plan,
             needs_retrieval=False,
             needs_structure=True,
             rationale=("Enumeration intent selects catalog/list strategy.",),
             strategy_source="rules",
-            policy_trace=policy_trace,
+            policy_trace=self._policy_trace,
         )
-
-    def answer_query(self, query: str, **kwargs: object) -> QueryAnswerResult:
-        self.answer_calls.append((query, kwargs))
-        return QueryAnswerResult(
-            plan=self.plan_query(query),
-            summary="Знайшов такі організовані програми:",
-            blocks=(AnswerBlock(title="Програми", lines=("Програма А", "Програма Б")),),
-            sources=("programs",),
-            search_response=None,
-            fallback_used=False,
+        return QueryInspectionResult(
+            normalized_query=NormalizedQuery(
+                raw_text=query,
+                user_locale="uk-UA",
+                detected_language="uk",
+                canonical_uk=query.casefold(),
+                created_at=datetime(2026, 4, 17, 12, 0, tzinfo=UTC),
+            ),
+            route_context=route_context,
+            router_decision=RouterDecision(
+                intent="enumeration",
+                needs_clarification=False,
+                clarification_question=None,
+                missing_slots=(),
+                routing_flags={
+                    "scope": "programs",
+                    "scopes": ("programs",),
+                    "strategy": "enumeration_catalog",
+                    "needs_retrieval": False,
+                    "needs_structure": True,
+                    "policy_mode": "fallback",
+                    "intent_source": "rules",
+                    "scope_source": "rules",
+                    "strategy_source": "rules",
+                    "retrieval_source": "rules",
+                },
+            ),
+            rewrite_result=RewriteResult(
+                canonical_uk=query.casefold(),
+                vector_query_uk="organized programs",
+                lexical={
+                    "keywords": ("organized programs",),
+                    "synonyms": (),
+                    "phrases": (query.casefold(), "organized programs"),
+                },
+                filters={
+                    "category": None,
+                    "logical_id": None,
+                    "language": "uk",
+                    "attribute_filters": {},
+                },
+            ),
+            answer_result=AnswerResult(
+                state="answered",
+                answer_text=(
+                    "Found these organized programs:\n\n"
+                    "Programs\n"
+                    "- Program A\n"
+                    "- Program B\n\n"
+                    "Sources:\n"
+                    "- programs"
+                ),
+                clarification_question=None,
+                source_section_ids=("programs",),
+                debug_reason="structure_only_overview",
+            ),
             retrieval_trace=QueryRetrievalExecutionTrace(
-                initial_planned_queries=("РѕСЂРіР°РЅС–Р·РѕРІР°РЅС– РїСЂРѕРіСЂР°РјРё",),
+                initial_planned_queries=("organized programs",),
                 initial_executed_queries=(),
                 initial_result_count=0,
                 initial_top_score=None,
                 initial_stop_reason="no_alternate_queries_planned",
                 retry_executed=False,
-                planned_queries=("організовані програми",),
+                planned_queries=("organized programs",),
                 executed_queries=(),
                 merged_raw_hit_count=0,
                 merged_result_count=0,
@@ -174,10 +241,7 @@ class FailingPipeline:
     def classify_query(self, query: str) -> QueryClassification:
         raise RuntimeError("pipeline unavailable")
 
-    def plan_query(self, query: str) -> QueryPlan:
-        raise RuntimeError("pipeline unavailable")
-
-    def answer_query(self, query: str, **kwargs: object) -> QueryAnswerResult:
+    def inspect_query(self, query: str, **kwargs: object) -> QueryInspectionResult:
         raise RuntimeError("pipeline unavailable")
 
 
@@ -286,7 +350,6 @@ def test_vs_handler_returns_raw_search_hits(monkeypatch) -> None:
     assert "file=faq.md" in rendered
     assert "heading_path=FAQ > Registration" in rendered
     assert "Text:\nFirst chunk\n\nSecond chunk" in rendered
-    assert "answer_mode=" not in rendered
     assert all(call["parse_mode"] is None for call in bot.calls)
 
 
@@ -316,7 +379,7 @@ def test_qclass_handler_renders_intent_rules(monkeypatch) -> None:
     asyncio.run(
         query_debug.query_classification_handler(
             message,
-            _command(query_debug.QCLASS_COMMAND_NAME, "Які є види організованих програм?"),
+            _command(query_debug.QCLASS_COMMAND_NAME, "What organized programs do you have?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )
@@ -328,7 +391,7 @@ def test_qclass_handler_renders_intent_rules(monkeypatch) -> None:
     assert "Explicit request for program list/types" in rendered
 
 
-def test_qplan_handler_renders_scope_strategy_and_retrieval_plan(monkeypatch) -> None:
+def test_qplan_handler_renders_scope_strategy_and_rewrite(monkeypatch) -> None:
     bot = FakeBot()
     message = FakeMessage(bot)
     pipeline = SuccessfulPipeline()
@@ -337,7 +400,7 @@ def test_qplan_handler_renders_scope_strategy_and_retrieval_plan(monkeypatch) ->
     asyncio.run(
         query_debug.query_plan_handler(
             message,
-            _command(query_debug.QPLAN_COMMAND_NAME, "Які є види організованих програм?"),
+            _command(query_debug.QPLAN_COMMAND_NAME, "What organized programs do you have?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )
@@ -346,11 +409,10 @@ def test_qplan_handler_renders_scope_strategy_and_retrieval_plan(monkeypatch) ->
     assert "intent=enumeration" in rendered
     assert "scope=programs" in rendered
     assert "strategy=enumeration_catalog" in rendered
-    assert "retrieval_source=rules" in rendered
-    assert "Retrieval plan:" in rendered
-    assert "primary_query=організовані програми" in rendered
     assert "needs_retrieval=False" in rendered
     assert "needs_structure=True" in rendered
+    assert "Rewrite result:" in rendered
+    assert "vector_query_uk=organized programs" in rendered
     assert "Policy trace:" in rendered
     assert "mode=fallback" in rendered
     assert "llm_requested=False" in rendered
@@ -365,7 +427,7 @@ def test_qroute_handler_renders_policy_trace(monkeypatch) -> None:
     asyncio.run(
         query_debug.query_route_handler(
             message,
-            _command(query_debug.QROUTE_COMMAND_NAME, "Які є види організованих програм?"),
+            _command(query_debug.QROUTE_COMMAND_NAME, "What organized programs do you have?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )
@@ -376,12 +438,12 @@ def test_qroute_handler_renders_policy_trace(monkeypatch) -> None:
     assert "llm_escalation_triggered=False" in rendered
     assert "retry_executed=False" in rendered
     assert "deterministic_strategy=enumeration_catalog" in rendered
-    assert "deterministic_retrieval_primary=організовані програми" in rendered
+    assert "deterministic_retrieval_primary=organized programs" in rendered
     assert "final_retrieval_source=rules" in rendered
     assert "Stage toggles:" in rendered
 
 
-def test_qanswer_handler_runs_structured_pipeline(monkeypatch) -> None:
+def test_qanswer_handler_renders_answer_result(monkeypatch) -> None:
     bot = FakeBot()
     message = FakeMessage(bot)
     pipeline = SuccessfulPipeline()
@@ -390,27 +452,25 @@ def test_qanswer_handler_runs_structured_pipeline(monkeypatch) -> None:
     asyncio.run(
         query_debug.query_answer_handler(
             message,
-            _command(query_debug.QANSWER_COMMAND_NAME, "Які є види організованих програм?"),
+            _command(query_debug.QANSWER_COMMAND_NAME, "What organized programs do you have?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
-    assert pipeline.answer_calls == [
-        ("Які є види організованих програм?", {"rewrite_query": False})
+    assert pipeline.inspect_calls == [
+        ("What organized programs do you have?", {"rewrite_query": False})
     ]
     rendered = "".join(str(call["text"]) for call in bot.calls)
     assert "intent=enumeration" in rendered
     assert "strategy=enumeration_catalog" in rendered
-    assert "strategy_source=rules" in rendered
-    assert "retrieval_source=rules" in rendered
-    assert "mode=fallback" in rendered
-    assert "Retrieval plan:" in rendered
-    assert "Знайшов такі організовані програми:" in rendered
-    assert "- Програма А" in rendered
+    assert "answer_state=answered" in rendered
+    assert "source_count=1" in rendered
+    assert "Found these organized programs:" in rendered
+    assert "- Program A" in rendered
     assert "Sources:\n- programs" in rendered
 
 
-def test_qretrieve_handler_renders_retrieval_plan_and_trace(monkeypatch) -> None:
+def test_qretrieve_handler_renders_retrieval_trace(monkeypatch) -> None:
     bot = FakeBot()
     message = FakeMessage(bot)
     pipeline = SuccessfulPipeline()
@@ -419,16 +479,15 @@ def test_qretrieve_handler_renders_retrieval_plan_and_trace(monkeypatch) -> None
     asyncio.run(
         query_debug.query_retrieval_handler(
             message,
-            _command(query_debug.QRETRIEVE_COMMAND_NAME, "Які є види організованих програм?"),
+            _command(query_debug.QRETRIEVE_COMMAND_NAME, "What organized programs do you have?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )
 
     rendered = "".join(str(call["text"]) for call in bot.calls)
     assert "retrieval_source=rules" in rendered
-    assert "Retrieval plan:" in rendered
     assert "Retrieval execution:" in rendered
-    assert "planned_queries=організовані програми" in rendered
+    assert "final_planned_queries=organized programs" in rendered
     assert "stop_reason=no_alternate_queries_planned" in rendered
 
 
@@ -440,7 +499,7 @@ def test_qdebug_handlers_return_friendly_error_when_pipeline_fails(monkeypatch) 
     asyncio.run(
         query_debug.query_classification_handler(
             message,
-            _command(query_debug.QCLASS_COMMAND_NAME, "Що ви можете мені запропонувати?"),
+            _command(query_debug.QCLASS_COMMAND_NAME, "What can you offer me?"),
             **PUBLIC_DEBUG_CONTEXT,
         )
     )

@@ -4,7 +4,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from app.services.knowledge_base.types_openai import SearchResponse
+from app.services.knowledge_base.query.dto import (
+    AnswerResult,
+    EvidencePacket,
+    LexicalHit,
+    NormalizedQuery,
+    RewriteResult,
+    RouterDecision,
+    VectorHit,
+)
 
 QueryIntent = Literal["detail", "enumeration", "overview", "comparison", "unknown"]
 QueryScopeName = Literal[
@@ -117,7 +125,7 @@ class QueryPolicyTrace:
 
 
 @dataclass(frozen=True, slots=True)
-class QueryPlan:
+class QueryRouteContext:
     classification: QueryClassification
     scope_detection: QueryScopeDetection
     strategy: QueryStrategy
@@ -134,20 +142,17 @@ class QueryPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class AnswerBlock:
-    title: str
-    lines: tuple[str, ...] = ()
-    body: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class QueryAnswerResult:
-    plan: QueryPlan
-    blocks: tuple[AnswerBlock, ...]
-    summary: str | None
-    sources: tuple[str, ...] = ()
-    search_response: SearchResponse | None = None
-    fallback_used: bool = False
+class QueryInspectionResult:
+    normalized_query: NormalizedQuery
+    route_context: QueryRouteContext
+    router_decision: RouterDecision
+    rewrite_result: RewriteResult
+    vector_hits: tuple[VectorHit, ...] = ()
+    vector_top_score: float | None = None
+    vector_fallback_message: str | None = None
+    lexical_hits: tuple[LexicalHit, ...] = ()
+    evidence_packet: EvidencePacket | None = None
+    answer_result: AnswerResult | None = None
     retrieval_trace: QueryRetrievalExecutionTrace | None = None
 
 

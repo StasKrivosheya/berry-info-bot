@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from app.services.knowledge_base.query.answering_models import AnswerDraft
+from app.services.knowledge_base.query.dto import VectorHit
+from app.services.knowledge_base.query.renderer import AnswerBlock
 from app.services.knowledge_base.query.text import (
     shorten_text,
     strip_leading_markers,
@@ -9,19 +12,17 @@ from app.services.knowledge_base.query.text import (
     tokenize_text,
 )
 from app.services.knowledge_base.query.types import (
-    AnswerBlock,
-    QueryAnswerResult,
-    QueryPlan,
+    QueryRouteContext,
     StructuredDocument,
     StructuredSection,
 )
-from app.services.knowledge_base.types_openai import SearchResponse
-from app.services.knowledge_base.utils import dedupe_preserve_order, search_hit_logical_id
+from app.services.knowledge_base.utils import dedupe_preserve_order
 
 PROGRAM_HEADING_EXCLUDES = (
     "види програм",
     "детальний опис",
     "детальніший опис",
+    "детальніше опис",
     "вартість",
     "додаткові послуги",
     "тривалість",
@@ -30,12 +31,36 @@ PROGRAM_HEADING_EXCLUDES = (
     "підтвердження",
     "приклад повідомлення",
 )
+PROGRAM_CATALOG_HEADING_HINTS = ("види програм",)
+PROGRAM_CATALOG_BOUNDARY_HINTS = (
+    "додаткові послуги",
+    "трансфер",
+    "бронювання",
+    "підтвердження",
+    "приклад повідомлення",
+)
+
+PARK_SECTION_HINTS = (
+    "що входить",
+    "що у програмі",
+    "активності",
+    "розваги",
+)
+SERVICE_SECTION_HINTS = (
+    "додаткові послуги",
+    "послуги",
+)
+FOOD_SECTION_HINTS = (
+    "харчування",
+    "їжа",
+    "кафе",
+)
 
 
 def build_enumeration_result(
-    plan: QueryPlan,
+    plan: QueryRouteContext,
     documents: tuple[StructuredDocument, ...],
-) -> QueryAnswerResult | None:
+) -> AnswerDraft | None:
     if not documents:
         return None
 
@@ -51,20 +76,17 @@ def build_enumeration_result(
     if not items:
         return None
 
-    return QueryAnswerResult(
-        plan=plan,
+    return AnswerDraft(
         summary=summary,
         blocks=(AnswerBlock(title=title, lines=tuple(items[:12])),),
         sources=tuple(sources),
-        search_response=None,
-        fallback_used=False,
     )
 
 
 def build_overview_result(
-    plan: QueryPlan,
+    plan: QueryRouteContext,
     documents: tuple[StructuredDocument, ...],
-) -> QueryAnswerResult | None:
+) -> AnswerDraft | None:
     if not documents:
         return None
 
@@ -74,18 +96,26 @@ def build_overview_result(
 
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
+    used_sections: set[tuple[str, tuple[str, ...]]] = set()
 
     if "programs" in requested_scopes:
         items, block_sources = _collect_program_names(documents)
         if items:
-            blocks.append(AnswerBlock(title="Організовані програми", lines=tuple(items[:8])))
+            blocks.append(
+                AnswerBlock(
+                    title="Організовані програми",
+                    lines=tuple(items[:8]),
+                )
+            )
             sources.extend(block_sources)
 
     if "park_activities" in requested_scopes or "general" in requested_scopes:
         items, block_sources = _collect_section_items(
             documents,
-            heading_hints=("що входить", "що у програмі"),
+            heading_hints=PARK_SECTION_HINTS,
             limit=6,
+            allow_fallback=True,
+            used_sections=used_sections,
         )
         if items:
             blocks.append(AnswerBlock(title="У парку можна", lines=tuple(items)))
@@ -94,8 +124,10 @@ def build_overview_result(
     if "services" in requested_scopes or "general" in requested_scopes:
         items, block_sources = _collect_section_items(
             documents,
-            heading_hints=("додаткові послуги", "послуги на території парку"),
+            heading_hints=SERVICE_SECTION_HINTS,
             limit=5,
+            allow_fallback=True,
+            used_sections=used_sections,
         )
         if items:
             blocks.append(AnswerBlock(title="Додаткові послуги", lines=tuple(items)))
@@ -104,8 +136,10 @@ def build_overview_result(
     if "food" in requested_scopes:
         items, block_sources = _collect_section_items(
             documents,
-            heading_hints=("харчування", "частування"),
+            heading_hints=FOOD_SECTION_HINTS,
             limit=5,
+            allow_fallback=True,
+            used_sections=used_sections,
         )
         if items:
             blocks.append(AnswerBlock(title="Їжа та харчування", lines=tuple(items)))
@@ -114,27 +148,25 @@ def build_overview_result(
     if not blocks:
         return None
 
-    return QueryAnswerResult(
-        plan=plan,
+    return AnswerDraft(
         summary="Знайшов кілька основних варіантів у Berry Land.",
         blocks=tuple(blocks),
         sources=tuple(dedupe(sources)),
-        search_response=None,
-        fallback_used=False,
     )
 
 
 def build_comparison_result(
-    plan: QueryPlan,
+    plan: QueryRouteContext,
     query: str,
     documents: tuple[StructuredDocument, ...],
-    search_response: SearchResponse | None,
-) -> QueryAnswerResult | None:
-    if not documents or search_response is None or not search_response.results:
+    vector_hits: tuple[VectorHit, ...],
+) -> AnswerDraft | None:
+    del plan
+    if not documents or not vector_hits:
         return None
 
     documents_by_id = {document.logical_id: document for document in documents}
-    candidate_ids = dedupe(list(document_support(search_response).keys()))[:2]
+    candidate_ids = dedupe(list(document_support(vector_hits).keys()))[:2]
     blocks: list[AnswerBlock] = []
     sources: list[str] = []
 
@@ -151,13 +183,10 @@ def build_comparison_result(
     if len(blocks) < 2:
         return None
 
-    return QueryAnswerResult(
-        plan=plan,
+    return AnswerDraft(
         summary="Знайшов такі варіанти для порівняння:",
         blocks=tuple(blocks),
         sources=tuple(dedupe(sources)),
-        search_response=search_response,
-        fallback_used=False,
     )
 
 
@@ -173,12 +202,13 @@ def extract_section_items(body: str) -> list[str]:
     return items
 
 
-def document_support(search_response: SearchResponse) -> dict[str, float]:
+def document_support(vector_hits: tuple[VectorHit, ...]) -> dict[str, float]:
     support: dict[str, float] = {}
-    for hit in search_response.results:
-        logical_id = search_hit_logical_id(hit)
-        previous = support.get(logical_id, 0.0)
-        support[logical_id] = max(previous, hit.score)
+    for hit in vector_hits:
+        logical_id = (
+            str(hit.attributes.get("logical_id", "")).strip() or hit.section_id.split(":", 1)[0]
+        )
+        support[logical_id] = max(support.get(logical_id, 0.0), hit.score)
     return support
 
 
@@ -197,17 +227,24 @@ def _collect_program_names(
         if not _looks_like_program_document(document):
             continue
         used_document = False
+        catalog_active = _document_starts_with_program_catalog(document)
         for section in document.sections:
             if section.level != 2:
                 continue
-            if not _looks_like_program_name(section.heading):
+            heading = section.heading.casefold()
+            if _is_program_catalog_heading(heading):
+                catalog_active = True
                 continue
-            normalized = section.heading
-            key = normalized.casefold()
+            if catalog_active and _is_program_catalog_boundary(heading):
+                catalog_active = False
+                continue
+            if not catalog_active or not _looks_like_program_name(section.heading):
+                continue
+            key = section.heading.casefold()
             if key in seen_names:
                 continue
             seen_names.add(key)
-            names.append(normalized)
+            names.append(section.heading)
             used_document = True
         if used_document:
             sources.append(document.logical_id)
@@ -227,17 +264,17 @@ def _collect_section_titles(
         for section in document.sections:
             if section.level > 3:
                 continue
-            normalized = section.heading
-            key = normalized.casefold()
+            if len(section.heading) < 3:
+                continue
+            key = section.heading.casefold()
             if key in seen_titles:
                 continue
-            if len(normalized) < 3:
-                continue
             seen_titles.add(key)
-            titles.append(normalized)
+            titles.append(section.heading)
             used_document = True
         if used_document:
             sources.append(document.logical_id)
+
     return titles, dedupe(sources)
 
 
@@ -246,32 +283,48 @@ def _collect_section_items(
     *,
     heading_hints: tuple[str, ...],
     limit: int,
+    allow_fallback: bool = False,
+    used_sections: set[tuple[str, tuple[str, ...]]] | None = None,
 ) -> tuple[list[str], list[str]]:
     items: list[str] = []
     sources: list[str] = []
     seen_items: set[str] = set()
 
-    for document in documents:
-        used_document = False
-        for section in document.sections:
-            heading = section.heading.casefold()
-            if not any(hint in heading for hint in heading_hints):
-                continue
-            for item in extract_section_items(section.body):
-                key = item.casefold()
-                if key in seen_items:
+    def collect(*, fallback_mode: bool) -> None:
+        for document in documents:
+            used_document = False
+            for section in document.sections:
+                section_key = (document.logical_id, section.heading_path)
+                if used_sections is not None and section_key in used_sections:
                     continue
-                seen_items.add(key)
-                items.append(item)
-                used_document = True
-                if len(items) >= limit:
+                heading = section.heading.casefold()
+                if not fallback_mode and not any(hint in heading for hint in heading_hints):
+                    continue
+                section_items = extract_section_items(section.body)
+                if not section_items:
+                    continue
+                for item in section_items:
+                    key = item.casefold()
+                    if key in seen_items:
+                        continue
+                    seen_items.add(key)
+                    items.append(item)
+                    used_document = True
+                    if len(items) >= limit:
+                        break
+                if used_document and used_sections is not None:
+                    used_sections.add(section_key)
+                if used_document or len(items) >= limit:
                     break
+            if used_document:
+                sources.append(document.logical_id)
+                break
             if len(items) >= limit:
                 break
-        if used_document:
-            sources.append(document.logical_id)
-        if len(items) >= limit:
-            break
+
+    collect(fallback_mode=False)
+    if not items and allow_fallback:
+        collect(fallback_mode=True)
 
     return items, dedupe(sources)
 
@@ -280,6 +333,7 @@ def _comparison_lines(document: StructuredDocument, query: str) -> list[str]:
     lines: list[str] = []
     query_tokens = tokenize_text(query)
     ranked_sections: list[tuple[int, StructuredSection]] = []
+
     for section in document.sections:
         score = token_overlap_score(
             query_tokens,
@@ -297,22 +351,37 @@ def _comparison_lines(document: StructuredDocument, query: str) -> list[str]:
         items = extract_section_items(section.body)[:3]
         if items:
             lines.extend(items)
-        else:
-            excerpt = shorten_text(section.body, limit=140)
-            if excerpt:
-                lines.append(excerpt)
+            continue
+        excerpt = shorten_text(section.body, limit=140)
+        if excerpt:
+            lines.append(excerpt)
+
     return dedupe(lines)[:4]
 
 
 def _looks_like_program_document(document: StructuredDocument) -> bool:
+    if document.category == "programs":
+        return True
     title = document.title.casefold()
-    if "програм" in title or "організован" in title:
+    if "програм" in title:
         return True
     return any("види програм" in section.heading.casefold() for section in document.sections[:4])
 
 
+def _document_starts_with_program_catalog(document: StructuredDocument) -> bool:
+    return any(hint in document.title.casefold() for hint in PROGRAM_CATALOG_HEADING_HINTS)
+
+
+def _is_program_catalog_heading(heading: str) -> bool:
+    return any(hint in heading for hint in PROGRAM_CATALOG_HEADING_HINTS)
+
+
+def _is_program_catalog_boundary(heading: str) -> bool:
+    return any(hint in heading for hint in PROGRAM_CATALOG_BOUNDARY_HINTS)
+
+
 def _looks_like_program_name(heading: str) -> bool:
-    normalized = heading
+    normalized = heading.strip()
     folded = normalized.casefold()
     if len(normalized) < 4 or normalized.isdigit():
         return False
