@@ -124,7 +124,9 @@ def _write_manifest(tmp_path: Path) -> Path:
             "## ВИДИ ПРОГРАМ\n\n"
             "## Програма А\n\n"
             "## Програма Б\n\n"
-            "## ДОДАТКОВІ ПОСЛУГИ\n"
+            "## ДОДАТКОВІ ПОСЛУГИ\n\n"
+            "## Трансфер з інших міст\n\n"
+            "## Дніпро\n"
         ),
         encoding="utf-8",
     )
@@ -444,6 +446,82 @@ def test_pipeline_overview_uses_structure_and_skips_retrieval(tmp_path: Path) ->
     assert "- Поні-ферма" in rendered
     assert "Додаткові послуги" in rendered
     assert "- Альтанки з мангалом" in rendered
+
+
+def test_pipeline_topic_program_phrase_uses_structure_catalog(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(_search_response(logical_id="programs", text="Програма А"))
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    program_queries = (
+        "Дитячі програми",
+        "які є види програм?",
+        "підкажіть щодо доступних організованих програм?",
+        "надайте перелік дитячих програм які можна замовити?",
+    )
+
+    for query in program_queries:
+        inspection, result = _inspect_and_answer(pipeline, query)
+        assert inspection.route_context.scope_detection.primary_scope == "programs"
+        assert inspection.route_context.strategy == "enumeration_catalog"
+        rendered = render_query_answer(result)
+        assert "- Програма А" in rendered
+        assert "- Програма Б" in rendered
+        assert "Дніпро" not in rendered
+
+    assert retriever.calls == []
+
+
+def test_pipeline_activity_topic_phrase_uses_structure_overview(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(_search_response(logical_id="park", text="Поні-ферма"))
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    inspection, result = _inspect_and_answer(pipeline, "які є спорт активності")
+
+    assert retriever.calls == []
+    assert inspection.route_context.intent == "unknown"
+    assert inspection.route_context.scope_detection.primary_scope == "park_activities"
+    assert inspection.route_context.strategy == "overview_summary"
+    rendered = render_query_answer(result)
+    assert "- Ігрова зона" in rendered
+    assert "- Поні-ферма" in rendered
+
+
+def test_pipeline_existence_query_still_uses_retrieval_for_no_info(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    retriever = FakeRetriever(
+        SearchResponse(
+            results=[],
+            top_score=None,
+            used_threshold=0.7,
+            fallback_triggered=False,
+            fallback_message=None,
+        )
+    )
+    pipeline = KnowledgeBaseQueryPipeline(
+        retriever=retriever,
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        policy_settings=_disabled_settings(),
+    )
+
+    inspection, result = _inspect_and_answer(pipeline, "Чи є у вас ковзани?")
+
+    assert len(retriever.calls) == 1
+    assert inspection.route_context.intent == "detail"
+    assert inspection.route_context.strategy == "detail_retrieval"
+    assert result.answer_text == NO_RELEVANT_INFO_FALLBACK
+    assert result.source_section_ids == ()
 
 
 def test_pipeline_detail_uses_retrieval_and_renders_nearby_sections(tmp_path: Path) -> None:

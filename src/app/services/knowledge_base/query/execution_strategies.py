@@ -20,11 +20,20 @@ from app.services.knowledge_base.utils import dedupe_preserve_order
 
 PROGRAM_HEADING_EXCLUDES = (
     "види програм",
+    "детальний опис",
     "детальніший опис",
     "детальніше опис",
     "вартість",
     "додаткові послуги",
     "тривалість",
+    "трансфер",
+    "бронювання",
+    "підтвердження",
+    "приклад повідомлення",
+)
+PROGRAM_CATALOG_HEADING_HINTS = ("види програм",)
+PROGRAM_CATALOG_BOUNDARY_HINTS = (
+    "додаткові послуги",
     "трансфер",
     "бронювання",
     "підтвердження",
@@ -218,10 +227,18 @@ def _collect_program_names(
         if not _looks_like_program_document(document):
             continue
         used_document = False
+        catalog_active = _document_starts_with_program_catalog(document)
         for section in document.sections:
             if section.level != 2:
                 continue
-            if not _looks_like_program_name(section.heading):
+            heading = section.heading.casefold()
+            if _is_program_catalog_heading(heading):
+                catalog_active = True
+                continue
+            if catalog_active and _is_program_catalog_boundary(heading):
+                catalog_active = False
+                continue
+            if not catalog_active or not _looks_like_program_name(section.heading):
                 continue
             key = section.heading.casefold()
             if key in seen_names:
@@ -349,6 +366,18 @@ def _looks_like_program_document(document: StructuredDocument) -> bool:
     if "програм" in title:
         return True
     return any("види програм" in section.heading.casefold() for section in document.sections[:4])
+
+
+def _document_starts_with_program_catalog(document: StructuredDocument) -> bool:
+    return any(hint in document.title.casefold() for hint in PROGRAM_CATALOG_HEADING_HINTS)
+
+
+def _is_program_catalog_heading(heading: str) -> bool:
+    return any(hint in heading for hint in PROGRAM_CATALOG_HEADING_HINTS)
+
+
+def _is_program_catalog_boundary(heading: str) -> bool:
+    return any(hint in heading for hint in PROGRAM_CATALOG_BOUNDARY_HINTS)
 
 
 def _looks_like_program_name(heading: str) -> bool:

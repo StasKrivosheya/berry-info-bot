@@ -18,7 +18,7 @@ from app.services.knowledge_base.query.llm import (
 )
 from app.services.knowledge_base.query.planner import (
     build_query_plan_with_strategy,
-    strategy_for_intent,
+    strategy_for_query,
     strategy_matches_intent,
     strategy_requirements,
 )
@@ -205,7 +205,7 @@ class KnowledgeBaseQueryPolicy:
             else _default_scope("Scope stage disabled by configuration.")
         )
         strategy = (
-            strategy_for_intent(classification.intent)
+            strategy_for_query(query, classification, scope)
             if stage_toggles.planner_enabled
             else "safe_fallback"
         )
@@ -332,7 +332,7 @@ class KnowledgeBaseQueryPolicy:
             final_scope_source = "llm"
 
         if stage_toggles.planner_enabled:
-            final_strategy = strategy_for_intent(final_classification.intent)
+            final_strategy = strategy_for_query(query, final_classification, final_scope)
             final_strategy_source = "rules"
         else:
             final_strategy = "safe_fallback"

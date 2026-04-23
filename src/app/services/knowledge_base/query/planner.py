@@ -1,7 +1,10 @@
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 import logging
 
+from app.services.knowledge_base.query.text import normalize_query_text, tokenize_text
 from app.services.knowledge_base.query.types import (
     QueryClassification,
     QueryRetrievalPlan,
@@ -49,6 +52,45 @@ STRATEGY_REQUIREMENTS: dict[QueryStrategy, tuple[bool, bool]] = {
     "detail_retrieval": (True, True),
     "safe_fallback": (True, True),
 }
+DETAIL_QUERY_MARKERS = (
+    "чи є",
+    "скільки",
+    "коштує",
+    "вартість",
+    "ціна",
+    "коли",
+    "де",
+    "розклад",
+    "тривалість",
+    "умови",
+    "знижки",
+    "бронюван",
+    "доїхати",
+)
+CATALOG_QUERY_MARKERS = (
+    "які є",
+    "які у вас",
+    "які саме",
+    "що є",
+    "перелік",
+    "список",
+    "види",
+    "назви",
+    "варіанти",
+)
+ADVICE_QUERY_MARKERS = (
+    "порадь",
+    "порекомендуй",
+    "що порадиш",
+)
+CATALOG_SCOPE_TERMS: dict[str, tuple[str, ...]] = {
+    "programs": ("програм",),
+    "park_activities": ("актив", "розваг", "спорт", "водн"),
+    "services": ("послуг", "сервіс", "оренд"),
+    "food": ("харч", "їжа", "обід", "кафе", "частув"),
+    "zones": ("зон", "локац", "територ", "майданчик"),
+}
+CATALOG_MAX_TOPIC_TOKENS = 5
 
 
 def build_query_plan(
@@ -100,9 +142,55 @@ def strategy_for_intent(intent: str) -> QueryStrategy:
     return STRATEGY_FOR_INTENT.get(intent, "safe_fallback")
 
 
+def strategy_for_query(
+    query: str,
+    classification: QueryClassification,
+    scope_detection: QueryScopeDetection,
+) -> QueryStrategy:
+    strategy = strategy_for_intent(classification.intent)
+    if classification.intent != "unknown":
+        return strategy
+    if not _is_scope_catalog_query(query, scope_detection):
+        return strategy
+    if scope_detection.primary_scope == "programs":
+        return "enumeration_catalog"
+    return "overview_summary"
+
+
 def strategy_requirements(strategy: QueryStrategy) -> tuple[bool, bool]:
     return STRATEGY_REQUIREMENTS[strategy]
 
 
 def strategy_matches_intent(intent: str, strategy: QueryStrategy) -> bool:
     return strategy == "safe_fallback" or strategy == strategy_for_intent(intent)
+
+
+def _is_scope_catalog_query(
+    query: str,
+    scope_detection: QueryScopeDetection,
+) -> bool:
+    if scope_detection.source == "default":
+        return False
+    if scope_detection.primary_scope in {"general", "pricing", "transfer"}:
+        return False
+    if scope_detection.confidence <= 0:
+        return False
+
+    normalized_query = normalize_query_text(query)
+    if any(marker in normalized_query for marker in DETAIL_QUERY_MARKERS):
+        return False
+    if any(marker in normalized_query for marker in ADVICE_QUERY_MARKERS):
+        return False
+
+    scope_terms = tuple(
+        term
+        for scope in scope_detection.scopes
+        for term in CATALOG_SCOPE_TERMS.get(scope, ())
+    )
+    if not scope_terms or not any(term in normalized_query for term in scope_terms):
+        return False
+
+    if any(marker in normalized_query for marker in CATALOG_QUERY_MARKERS):
+        return True
+
+    return len(tokenize_text(normalized_query)) <= CATALOG_MAX_TOPIC_TOKENS
