@@ -43,6 +43,7 @@ Required only for KB sync/search and future RAG work:
 - `OPENAI_VECTOR_STORE_ID`
 - `OPENAI_KB_SEARCH_MAX_RESULTS`
 - `OPENAI_KB_SCORE_THRESHOLD`
+- `KB_LEXICAL_INDEX_PATH`
 - `QUERY_CONTEXT_TTL_SECONDS`
 
 Never commit real `.env.local`, `.env.docker`, or `.env` files.
@@ -95,6 +96,10 @@ Generated output:
 
 - `data/knowledge_base/processed/manifest.json`
 - `data/knowledge_base/processed/markdown/*.md`
+- `data/knowledge_base/processed/kb_lexical.sqlite3`
+
+The parser command rebuilds the local SQLite FTS5 lexical index after a successful parse. Use
+`--skip-lexical-index` only when you need parser output without local search.
 
 Sync generated Markdown into the OpenAI vector store:
 

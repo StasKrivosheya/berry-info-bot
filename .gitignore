@@ -151,6 +151,8 @@ data/knowledge_base/raw_sources/*
 !data/knowledge_base/raw_sources/.gitkeep
 data/knowledge_base/processed/manifest.json
 data/knowledge_base/processed/markdown/*.md
+data/knowledge_base/processed/*.sqlite3
+data/knowledge_base/processed/*.sqlite3-*
 
 # Spyder project settings
 .spyderproject
