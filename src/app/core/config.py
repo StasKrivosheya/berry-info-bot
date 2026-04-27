@@ -7,7 +7,6 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.constants import (
-    DATABASE_URL_PREFIX,
     DEFAULT_APP_HOST,
     DEFAULT_APP_NAME,
     DEFAULT_APP_PORT,
@@ -42,16 +41,7 @@ class Settings(BaseSettings):
     )
 
     telegram_bot_token: SecretStr = Field(validation_alias="TELEGRAM_BOT_TOKEN")
-    database_url: str = Field(validation_alias="DATABASE_URL")
     admin_user_ids_raw: str = Field(default="", validation_alias="ADMIN_USER_IDS")
-
-    @field_validator("database_url")
-    @classmethod
-    def validate_database_url(cls, value: str) -> str:
-        if not value.startswith(DATABASE_URL_PREFIX):
-            msg = f"DATABASE_URL must start with '{DATABASE_URL_PREFIX}'"
-            raise ValueError(msg)
-        return value
 
     @field_validator("debug_commands_mode", mode="before")
     @classmethod

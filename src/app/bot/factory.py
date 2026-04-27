@@ -32,5 +32,7 @@ def create_dispatcher(
     dispatcher[DISPATCHER_CONTEXT_ADMIN_USER_IDS] = set(admin_user_ids)
     dispatcher[DISPATCHER_CONTEXT_DEBUG_COMMANDS_MODE] = debug_commands_mode
     dispatcher.update.outer_middleware(TraceContextMiddleware())
-    dispatcher.include_router(build_root_router())
+    dispatcher.include_router(
+        build_root_router(include_debug_commands=debug_commands_mode != "disabled")
+    )
     return dispatcher
