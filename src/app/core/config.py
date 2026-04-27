@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     )
 
     telegram_bot_token: SecretStr = Field(validation_alias="TELEGRAM_BOT_TOKEN")
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_query_router_model: str | None = Field(
+        default=None,
+        validation_alias="OPENAI_QUERY_ROUTER_MODEL",
+    )
+    openai_query_router_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS",
+    )
+    query_context_ttl_seconds: int = Field(
+        default=900,
+        validation_alias="QUERY_CONTEXT_TTL_SECONDS",
+    )
     admin_user_ids_raw: str = Field(default="", validation_alias="ADMIN_USER_IDS")
 
     @field_validator("debug_commands_mode", mode="before")
@@ -52,6 +65,24 @@ class Settings(BaseSettings):
 
         msg = "DEBUG_COMMANDS_MODE must be one of: disabled, admins, public."
         raise ValueError(msg)
+
+    @field_validator("openai_query_router_model")
+    @classmethod
+    def normalize_query_router_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("openai_query_router_timeout_seconds")
+    @classmethod
+    def clamp_query_router_timeout(cls, value: int) -> int:
+        return max(1, min(60, value))
+
+    @field_validator("query_context_ttl_seconds")
+    @classmethod
+    def clamp_query_context_ttl(cls, value: int) -> int:
+        return max(30, min(24 * 60 * 60, value))
 
     @property
     def admin_user_ids(self) -> tuple[int, ...]:
@@ -71,6 +102,13 @@ class Settings(BaseSettings):
                 msg = "ADMIN_USER_IDS must be a comma-separated list of integers."
                 raise ValueError(msg) from exc
         return tuple(parsed_ids)
+
+    @property
+    def openai_api_key_value(self) -> str | None:
+        if self.openai_api_key is None:
+            return None
+        normalized = self.openai_api_key.get_secret_value().strip()
+        return normalized or None
 
 
 @lru_cache(maxsize=1)

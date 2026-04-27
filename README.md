@@ -38,11 +38,12 @@ is explicitly set to `admins` or `public`.
 Required only for KB sync/search and future RAG work:
 
 - `OPENAI_API_KEY`
+- `OPENAI_QUERY_ROUTER_MODEL`
+- `OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS`
 - `OPENAI_VECTOR_STORE_ID`
 - `OPENAI_KB_SEARCH_MAX_RESULTS`
 - `OPENAI_KB_SCORE_THRESHOLD`
-- `KB_QUERY_LLM_MODEL`
-- `KB_QUERY_LLM_TIMEOUT_SECONDS`
+- `QUERY_CONTEXT_TTL_SECONDS`
 
 Never commit real `.env.local`, `.env.docker`, or `.env` files.
 
@@ -106,6 +107,18 @@ Run a local vector-search smoke query:
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\kb_smoke_test.py "how to register?"
 ```
+
+## Free-Text Routing
+
+Commands, callbacks, exact menu buttons, and `2026` are handled deterministically. Other text
+messages go through one structured OpenAI routing call that returns:
+
+- route: `greeting`, `smalltalk`, `menu_help`, `follow_up`, `kb_query`, or `unsupported`
+- Ukrainian canonical question and vector query for KB-searchable messages
+- lexical keywords/phrases and optional category/logical hints
+
+If the routing call is unavailable, the bot responds with a safe virtual-manager message and keeps
+the menu buttons visible.
 
 ## Debug Commands
 

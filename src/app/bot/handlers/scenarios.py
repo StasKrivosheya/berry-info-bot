@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
@@ -18,6 +20,15 @@ from app.bot.scenarios.catalog import (
 )
 from app.bot.scenarios.keyboards import build_main_menu_keyboard, build_scenario_keyboard
 from app.bot.scenarios.navigation import ScenarioMessenger, resolve_chat_id
+from app.core.config import get_settings
+from app.services.knowledge_base.query_router import (
+    SERVICE_FALLBACK_TEXT,
+    OpenAIQueryRouter,
+    QueryContextKey,
+    QueryContextStore,
+    QueryRoutingResult,
+    route_free_text_message,
+)
 
 router = Router(name="scenarios")
 messenger = ScenarioMessenger()
@@ -155,6 +166,22 @@ async def keyword_2026_handler(message: Message) -> None:
     )
 
 
+@router.message(F.text.startswith("/"))
+async def unknown_command_handler(message: Message) -> None:
+    """Handle unsupported commands without invoking the LLM router."""
+
+    if message.from_user is None:
+        return
+
+    await messenger.send(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        user_id=message.from_user.id,
+        text=UNKNOWN_TEXT_RESPONSE,
+        reply_markup=build_main_menu_keyboard(),
+    )
+
+
 @router.message(~F.text)
 async def unknown_message_type_handler(message: Message) -> None:
     """Handle non-text content with a friendly placeholder response."""
@@ -173,15 +200,64 @@ async def unknown_message_type_handler(message: Message) -> None:
 
 @router.message(F.text)
 async def unknown_text_handler(message: Message) -> None:
-    """Handle unknown text content with guidance."""
+    """Route normal free text through the production KB routing contract."""
 
-    if message.from_user is None:
+    if message.from_user is None or message.text is None:
         return
+
+    routing_result = _route_free_text_for_message(
+        chat_id=message.chat.id,
+        user_id=message.from_user.id,
+        text=message.text,
+    )
+    if routing_result.route is not None and routing_result.route.route == "menu_help":
+        text = MENU_MESSAGE_TEXT
+    else:
+        text = routing_result.response_text
 
     await messenger.send(
         bot=message.bot,
         chat_id=message.chat.id,
         user_id=message.from_user.id,
-        text=UNKNOWN_TEXT_RESPONSE,
+        text=text,
         reply_markup=build_main_menu_keyboard(),
+    )
+
+
+@lru_cache(maxsize=1)
+def _create_query_router() -> OpenAIQueryRouter:
+    settings = get_settings()
+    api_key = settings.openai_api_key_value
+    model = settings.openai_query_router_model
+    if api_key is None or model is None:
+        msg = "query_router_unavailable:missing_openai_api_key_or_model"
+        raise RuntimeError(msg)
+    return OpenAIQueryRouter(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=settings.openai_query_router_timeout_seconds,
+    )
+
+
+@lru_cache(maxsize=1)
+def _create_query_context_store() -> QueryContextStore:
+    settings = get_settings()
+    return QueryContextStore(ttl_seconds=settings.query_context_ttl_seconds)
+
+
+def _route_free_text_for_message(*, chat_id: int, user_id: int, text: str) -> QueryRoutingResult:
+    try:
+        query_router = _create_query_router()
+    except Exception:
+        return QueryRoutingResult(
+            route=None,
+            response_text=SERVICE_FALLBACK_TEXT,
+            should_search=False,
+        )
+
+    return route_free_text_message(
+        router=query_router,
+        context_store=_create_query_context_store(),
+        context_key=QueryContextKey(chat_id=chat_id, user_id=user_id),
+        message=text,
     )
