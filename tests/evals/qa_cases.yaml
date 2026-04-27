@@ -1,0 +1,40 @@
+cases:
+  - id: uk_programs_real_utf8
+    language: uk
+    query: "Які у вас є програми?"
+    expected:
+      intent: enumeration
+      scope: programs
+      strategy: enumeration_catalog
+      needs_retrieval: false
+      note: "Current deterministic rules recognize this Ukrainian program-list query."
+
+  - id: ru_programs_real_utf8
+    language: ru
+    query: "Какие программы есть?"
+    expected:
+      intent: unknown
+      scope: programs
+      strategy: enumeration_catalog
+      needs_retrieval: false
+      note: "Russian wording only partially maps today: program scope is detected, but intent remains unknown."
+
+  - id: en_programs_real_utf8
+    language: en
+    query: "What programs do you offer?"
+    expected:
+      intent: unknown
+      scope: general
+      strategy: safe_fallback
+      needs_retrieval: true
+      note: "English canonicalization is not implemented yet."
+
+  - id: uk_transfer_price_real_utf8
+    language: uk
+    query: "Скільки коштує трансфер?"
+    expected:
+      intent: detail
+      scope: services
+      strategy: detail_retrieval
+      needs_retrieval: true
+      note: "Current baseline recognizes this as detail but scopes it to services instead of transfer."
