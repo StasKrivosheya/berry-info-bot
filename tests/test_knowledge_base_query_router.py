@@ -64,6 +64,8 @@ def _route(
     lexical_keywords: list[str] | None = None,
     lexical_phrases: list[str] | None = None,
     use_context: bool = False,
+    topic_hint: str | None = None,
+    direction_hint: str | None = None,
     confidence: float = 0.9,
 ) -> QueryRoute:
     return QueryRoute(
@@ -74,6 +76,8 @@ def _route(
         lexical_keywords=lexical_keywords or [],
         lexical_phrases=lexical_phrases or [],
         use_context=use_context,
+        topic_hint=topic_hint,
+        direction_hint=direction_hint,
         confidence=confidence,
     )
 
@@ -123,10 +127,84 @@ def test_ukrainian_kb_question_produces_searchable_route() -> None:
         message="Які у вас є програми?",
     )
 
-    assert result.route == route
+    assert result.route is not None
     assert result.should_search is True
     assert result.route.canonical_question_uk == "Які програми доступні в Berry Land?"
     assert result.route.vector_query_uk == "організовані програми Berry Land"
+    assert result.route.topic_hint == "programs"
+    assert result.route.direction_hint == "op"
+
+
+def test_direction_sensitive_topic_without_direction_asks_for_clarification() -> None:
+    route = _route(
+        "kb_query",
+        original_message="Скільки коштують квитки?",
+        canonical_question_uk="Яка вартість квитків у Berry Land?",
+        vector_query_uk="вартість квитків Berry Land",
+        lexical_keywords=["квитки", "вартість"],
+        lexical_phrases=["вартість квитків"],
+        topic_hint="tickets",
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(route),
+        context_store=_store(),
+        context_key=_key(),
+        message="Скільки коштують квитки?",
+    )
+
+    assert result.route is not None
+    assert result.route.topic_hint == "tickets"
+    assert result.route.direction_hint is None
+    assert result.should_search is False
+    assert "ОП" in result.response_text
+    assert "СВ" in result.response_text
+
+
+def test_controlled_direction_allows_search_for_sensitive_topic() -> None:
+    route = _route(
+        "kb_query",
+        original_message="Скільки коштують квитки на СВ?",
+        canonical_question_uk="Яка вартість квитків для сімейного відпочинку?",
+        vector_query_uk="вартість квитків сімейний відпочинок Berry Land",
+        lexical_keywords=["квитки", "вартість", "сімейний відпочинок"],
+        lexical_phrases=["вартість квитків"],
+        topic_hint="tickets",
+        direction_hint="sv",
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(route),
+        context_store=_store(),
+        context_key=_key(),
+        message="Скільки коштують квитки на СВ?",
+    )
+
+    assert result.route == route
+    assert result.should_search is True
+
+
+def test_program_topic_gets_default_op_direction() -> None:
+    route = _route(
+        "kb_query",
+        original_message="Які є види програм?",
+        canonical_question_uk="Які є види програм у Berry Land?",
+        vector_query_uk="види організованих програм Berry Land",
+        lexical_keywords=["програми"],
+        lexical_phrases=["види програм"],
+        topic_hint="programs",
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(route),
+        context_store=_store(),
+        context_key=_key(),
+        message="Які є види програм?",
+    )
+
+    assert result.route is not None
+    assert result.route.direction_hint == "op"
+    assert result.should_search is True
 
 
 def test_russian_and_english_questions_return_ukrainian_canonical_queries() -> None:
@@ -209,9 +287,12 @@ def test_short_follow_up_uses_previous_context_when_available() -> None:
     )
 
     assert first.should_search is True
-    assert second.route == follow_up_route
+    assert second.route is not None
+    assert second.route.route == follow_up_route.route
     assert second.should_search is True
     assert second.used_context is True
+    assert second.route.topic_hint == "tickets"
+    assert second.route.direction_hint == "op"
     assert router.calls[0]["context"] is None
     assert router.calls[1]["context"] is not None
 

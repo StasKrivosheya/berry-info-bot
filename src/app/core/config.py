@@ -50,6 +50,14 @@ class Settings(BaseSettings):
         default=10,
         validation_alias="OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS",
     )
+    openai_answer_model: str | None = Field(
+        default=None,
+        validation_alias="OPENAI_ANSWER_MODEL",
+    )
+    openai_answer_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="OPENAI_ANSWER_TIMEOUT_SECONDS",
+    )
     query_context_ttl_seconds: int = Field(
         default=900,
         validation_alias="QUERY_CONTEXT_TTL_SECONDS",
@@ -74,9 +82,22 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
+    @field_validator("openai_answer_model")
+    @classmethod
+    def normalize_answer_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
     @field_validator("openai_query_router_timeout_seconds")
     @classmethod
     def clamp_query_router_timeout(cls, value: int) -> int:
+        return max(1, min(60, value))
+
+    @field_validator("openai_answer_timeout_seconds")
+    @classmethod
+    def clamp_answer_timeout(cls, value: int) -> int:
         return max(1, min(60, value))
 
     @field_validator("query_context_ttl_seconds")

@@ -23,12 +23,16 @@ class ManifestSyncItem:
     content_hash_sha256: str
     markdown_relative_path: str
     markdown_absolute_path: Path
+    direction_id: str | None = None
+    topic_ids: tuple[str, ...] = ()
+    period_label: str | None = None
 
     @property
     def upload_attributes(self) -> Attributes:
         attributes: Attributes = {
             "logical_id": self.logical_id,
             "category": self.category,
+            "source_category": self.category,
             "version": self.version,
             "updated_at_utc": self.updated_at_utc,
             "source_file": self.source_file,
@@ -36,6 +40,12 @@ class ManifestSyncItem:
             "language": "uk",
             "content_hash_sha256": self.content_hash_sha256,
         }
+        if self.direction_id:
+            attributes["direction_id"] = self.direction_id
+        if self.topic_ids:
+            attributes["topic_ids"] = ",".join(self.topic_ids)
+        if self.period_label:
+            attributes["period_label"] = self.period_label
         if self.sheet_name:
             attributes["sheet_name"] = self.sheet_name
         if self.sheet_index is not None:

@@ -1,0 +1,148 @@
+version = "2026-04-mvp"
+
+[directions.op]
+label_uk = "Організовані програми"
+short_label = "ОП"
+aliases = [
+  "ОП",
+  "організовані програми",
+  "організована програма",
+  "програми для груп",
+  "екскурсійна програма",
+  "шкільна програма",
+]
+source_categories = ["ОП весна-літо", "Опис програм"]
+active = true
+
+[directions.sv]
+label_uk = "Сімейний відпочинок"
+short_label = "СВ"
+aliases = [
+  "СВ",
+  "сімейний відпочинок",
+  "сімейний візит",
+  "парк для сімей",
+  "відпочинок сім'єю",
+]
+source_categories = ["СВ (КВІТЕНЬ-ТРАВЕНЬ)"]
+active = true
+
+[directions.camping]
+label_uk = "Кемпінг"
+short_label = "Кемпінг"
+aliases = ["кемпінг", "табір", "ночівля", "camping"]
+source_categories = ["Кемпінг"]
+active = false
+
+[directions.birthdays]
+label_uk = "Дні народження"
+short_label = "ДН"
+aliases = ["ДН", "день народження", "дні народження", "святкування"]
+source_categories = ["ДН", "Дні народження"]
+active = false
+
+[directions.school_excursions]
+label_uk = "Шкільні екскурсії"
+short_label = "ШЕ"
+aliases = ["ШЕ", "шкільні екскурсії", "екскурсії для школи", "школа"]
+source_categories = ["ШЕ", "Шкільні екскурсії"]
+active = false
+
+[topics.tickets]
+label_uk = "Квитки та вартість"
+aliases = [
+  "квитки",
+  "квиток",
+  "вартість",
+  "ціна",
+  "ціни",
+  "тарифи",
+  "оплата",
+  "скільки коштує",
+]
+direction_sensitive = true
+
+[topics.schedule]
+label_uk = "Графік і дати"
+aliases = [
+  "графік",
+  "розклад",
+  "дні роботи",
+  "години роботи",
+  "коли працює",
+  "дати",
+  "квітень",
+  "травень",
+  "літо",
+]
+direction_sensitive = true
+
+[topics.programs]
+label_uk = "Програми"
+aliases = [
+  "програми",
+  "види програм",
+  "організовані програми",
+  "квест",
+  "майстер-клас",
+  "анімація",
+  "екскурсія",
+]
+direction_sensitive = false
+default_direction_id = "op"
+
+[topics.transfer]
+label_uk = "Трансфер"
+aliases = ["трансфер", "дорога", "доїхати", "автобус", "перевезення"]
+direction_sensitive = true
+
+[topics.food]
+label_uk = "Харчування"
+aliases = ["харчування", "їжа", "обід", "кафе", "меню", "напої"]
+direction_sensitive = true
+
+[topics.contacts]
+label_uk = "Контакти"
+aliases = ["контакти", "телефон", "подзвонити", "менеджер", "зв'язатися"]
+direction_sensitive = false
+
+[topics.location]
+label_uk = "Локація"
+aliases = ["адреса", "локація", "де знаходиться", "як доїхати"]
+direction_sensitive = false
+
+[topics.rules]
+label_uk = "Правила та обмеження"
+aliases = ["правила", "обмеження", "вік", "можна", "заборонено"]
+direction_sensitive = true
+
+[topics.services]
+label_uk = "Додаткові послуги"
+aliases = ["послуги", "додаткові послуги", "оренда", "бронювання"]
+direction_sensitive = true
+
+[topics.general]
+label_uk = "Загальна інформація"
+aliases = ["інформація", "деталі", "Berry Land"]
+direction_sensitive = false
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "ОП весна-літо"
+direction_id = "op"
+topic_ids = ["programs", "tickets", "schedule", "transfer", "food", "services", "rules"]
+period_label = "весна-літо 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "Опис програм"
+direction_id = "op"
+topic_ids = ["programs", "services", "rules"]
+period_label = "актуальні описи програм 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
+direction_id = "sv"
+topic_ids = ["tickets", "schedule", "services", "food", "rules", "location"]
+period_label = "квітень-травень 2026"

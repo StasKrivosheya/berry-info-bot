@@ -44,6 +44,9 @@ def write_tiny_manifest(tmp_path: Path) -> Path:
                         "output_md_file": ["markdown/programs.md"],
                         "logical_id": "programs",
                         "category": "programs",
+                        "direction_id": "op",
+                        "topic_ids": ["programs", "transfer"],
+                        "period_label": "test period",
                         "version": "1.0",
                         "updated_at_utc": "2026-04-27T00:00:00+00:00",
                         "row_count": 5,
@@ -69,6 +72,9 @@ def test_build_candidates_from_manifest_contains_stable_metadata(tmp_path: Path)
     assert first.candidate_id == first.section_id
     assert first.logical_id == "programs"
     assert first.category == "programs"
+    assert first.direction_id == "op"
+    assert "programs" in first.topic_ids
+    assert first.period_label == "test period"
     assert first.source_file == "kb.xlsx"
     assert first.sheet_name == "Programs"
     assert first.sheet_index == 1

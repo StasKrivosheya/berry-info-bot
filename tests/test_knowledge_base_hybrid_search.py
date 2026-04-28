@@ -58,6 +58,9 @@ def write_tiny_manifest(tmp_path: Path) -> Path:
                         "output_md_file": ["markdown/programs.md"],
                         "logical_id": "programs",
                         "category": "programs",
+                        "direction_id": "op",
+                        "topic_ids": ["programs", "transfer"],
+                        "period_label": "test period",
                         "version": "1.0",
                         "updated_at_utc": "2026-04-27T00:00:00+00:00",
                         "row_count": 5,
@@ -169,6 +172,34 @@ def test_hybrid_search_returns_lexical_only_candidates(tmp_path: Path) -> None:
     assert result.vector_result_count == 0
     assert result.lexical_result_count == 1
     assert len(result.candidates) == 1
+    assert result.candidates[0].source == "lexical"
+
+
+def test_hybrid_search_ignores_llm_category_hint_as_hard_filter(tmp_path: Path) -> None:
+    manifest_path = write_tiny_manifest(tmp_path)
+    index_path = tmp_path / "kb.sqlite3"
+    build_lexical_index_from_manifest(manifest_path, index_path=index_path)
+    vector = FakeVectorSearch(
+        SearchResponse(
+            results=[],
+            top_score=None,
+            used_threshold=0.7,
+            fallback_triggered=True,
+            fallback_message=None,
+        )
+    )
+    route = _route().model_copy(update={"category_hint": "programs/services"})
+    service = HybridSearchService(
+        vector_search=vector,
+        lexical_index=SQLiteLexicalIndex(index_path),
+        structure_reader=KnowledgeBaseStructureReader(manifest_path),
+        max_candidates=8,
+    )
+
+    result = service.search(route)
+
+    assert vector.calls[0]["category"] is None
+    assert result.lexical_result_count == 1
     assert result.candidates[0].source == "lexical"
 
 

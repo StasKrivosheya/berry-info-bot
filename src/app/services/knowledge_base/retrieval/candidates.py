@@ -7,6 +7,7 @@ from pathlib import Path
 from app.services.knowledge_base.manifest.reader import load_manifest_sync_items
 from app.services.knowledge_base.query.structure import KnowledgeBaseStructureReader
 from app.services.knowledge_base.query.types import StructuredDocument, StructuredSection
+from app.services.knowledge_base.taxonomy import get_default_taxonomy
 from app.services.knowledge_base.types_openai import ManifestSyncItem
 
 
@@ -16,6 +17,10 @@ class KnowledgeBaseCandidate:
     logical_id: str
     section_id: str
     category: str
+    source_category: str
+    direction_id: str | None
+    topic_ids: tuple[str, ...]
+    period_label: str | None
     heading_path: tuple[str, ...]
     content: str
     source_file: str
@@ -101,11 +106,20 @@ def _candidate_from_parts(
     content: str,
 ) -> KnowledgeBaseCandidate:
     section_id = stable_section_id(document.logical_id, heading_path)
+    taxonomy = get_default_taxonomy()
+    section_topic_ids = (
+        taxonomy.infer_topic_ids_from_text("\n".join((*heading_path, content)))
+        or item.topic_ids
+    )
     return KnowledgeBaseCandidate(
         candidate_id=section_id,
         logical_id=document.logical_id,
         section_id=section_id,
         category=document.category,
+        source_category=document.category,
+        direction_id=item.direction_id,
+        topic_ids=section_topic_ids,
+        period_label=item.period_label,
         heading_path=heading_path,
         content=content.strip(),
         source_file=item.source_file,

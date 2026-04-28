@@ -53,6 +53,10 @@ class SQLiteLexicalIndex:
                     logical_id,
                     section_id,
                     category,
+                    source_category,
+                    direction_id,
+                    topic_ids,
+                    period_label,
                     heading_path,
                     content,
                     source_file,
@@ -62,7 +66,7 @@ class SQLiteLexicalIndex:
                     workbook_file,
                     markdown_path
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [_candidate_row(candidate) for candidate in candidates],
             )
@@ -103,28 +107,12 @@ class SQLiteLexicalIndex:
             params.append(logical_id_hint)
         params.append(max(1, max_results))
 
-        sql = f"""
-            SELECT
-                candidate_id,
-                logical_id,
-                section_id,
-                category,
-                heading_path,
-                content,
-                source_file,
-                source_format,
-                sheet_name,
-                sheet_index,
-                workbook_file,
-                markdown_path,
-                bm25(kb_fts) AS rank
-            FROM kb_fts
-            WHERE {" AND ".join(clauses)}
-            ORDER BY rank
-            LIMIT ?
-        """
         with sqlite3.connect(self._index_path) as connection:
             connection.row_factory = sqlite3.Row
+            sql = _build_search_sql(
+                clauses=clauses,
+                columns=_table_columns(connection),
+            )
             rows = connection.execute(sql, params).fetchall()
 
         return tuple(_hit_from_row(row) for row in rows)
@@ -173,6 +161,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             logical_id UNINDEXED,
             section_id UNINDEXED,
             category UNINDEXED,
+            source_category UNINDEXED,
+            direction_id UNINDEXED,
+            topic_ids UNINDEXED,
+            period_label UNINDEXED,
             heading_path UNINDEXED,
             content,
             source_file UNINDEXED,
@@ -193,6 +185,10 @@ def _candidate_row(candidate: KnowledgeBaseCandidate) -> tuple[object, ...]:
         candidate.logical_id,
         candidate.section_id,
         candidate.category,
+        candidate.source_category,
+        candidate.direction_id,
+        ",".join(candidate.topic_ids),
+        candidate.period_label,
         json.dumps(list(candidate.heading_path), ensure_ascii=False),
         candidate.content,
         candidate.source_file,
@@ -212,6 +208,10 @@ def _hit_from_row(row: sqlite3.Row) -> LexicalSearchHit:
             logical_id=str(row["logical_id"]),
             section_id=str(row["section_id"]),
             category=str(row["category"]),
+            source_category=str(row["source_category"] or row["category"]),
+            direction_id=str(row["direction_id"]) if row["direction_id"] else None,
+            topic_ids=_split_csv_tuple(row["topic_ids"]),
+            period_label=str(row["period_label"]) if row["period_label"] else None,
             heading_path=tuple(json.loads(str(row["heading_path"] or "[]"))),
             content=str(row["content"]),
             source_file=str(row["source_file"]),
@@ -229,3 +229,53 @@ def _hit_from_row(row: sqlite3.Row) -> LexicalSearchHit:
 
 def _quote_fts_phrase(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _build_search_sql(
+    *,
+    clauses: list[str],
+    columns: set[str],
+) -> str:
+    select_columns = [
+        "candidate_id",
+        "logical_id",
+        "section_id",
+        "category",
+        _select_column(columns, "source_category", "category"),
+        _select_column(columns, "direction_id", "NULL"),
+        _select_column(columns, "topic_ids", "''"),
+        _select_column(columns, "period_label", "NULL"),
+        "heading_path",
+        "content",
+        "source_file",
+        "source_format",
+        "sheet_name",
+        "sheet_index",
+        "workbook_file",
+        "markdown_path",
+        "bm25(kb_fts) AS rank",
+    ]
+    return f"""
+        SELECT
+            {", ".join(select_columns)}
+        FROM kb_fts
+        WHERE {" AND ".join(clauses)}
+        ORDER BY rank
+        LIMIT ?
+    """
+
+
+def _select_column(columns: set[str], name: str, fallback: str) -> str:
+    if name in columns:
+        return name
+    return f"{fallback} AS {name}"
+
+
+def _table_columns(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute("PRAGMA table_info(kb_fts)").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def _split_csv_tuple(value: object) -> tuple[str, ...]:
+    raw = str(value or "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())

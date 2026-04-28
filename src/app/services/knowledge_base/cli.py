@@ -10,6 +10,7 @@ from app.services.knowledge_base.retrieval.lexical import (
     DEFAULT_LEXICAL_INDEX_PATH,
     build_lexical_index_from_manifest,
 )
+from app.services.knowledge_base.taxonomy import DEFAULT_TAXONOMY_PATH
 from app.services.knowledge_base.types import SelectableSourceFormat
 
 DEFAULT_INPUT_DIR = Path("data/knowledge_base/raw_sources")
@@ -43,6 +44,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CONFIG_PATH,
         help=f"Path to parser config TOML (default: {DEFAULT_CONFIG_PATH.as_posix()})",
+    )
+    parser.add_argument(
+        "--taxonomy",
+        type=Path,
+        default=DEFAULT_TAXONOMY_PATH,
+        help=f"Path to KB taxonomy TOML (default: {DEFAULT_TAXONOMY_PATH.as_posix()})",
     )
     parser.add_argument(
         "--log-level",
@@ -102,6 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_dir=args.output_dir,
             config_path=args.config,
+            taxonomy_path=args.taxonomy,
             source_formats=_normalize_source_formats(args.source_format),
         )
     except Exception:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from functools import lru_cache
 
 from aiogram import F, Router
@@ -21,6 +23,11 @@ from app.bot.scenarios.catalog import (
 from app.bot.scenarios.keyboards import build_main_menu_keyboard, build_scenario_keyboard
 from app.bot.scenarios.navigation import ScenarioMessenger, resolve_chat_id
 from app.core.config import get_settings
+from app.services.knowledge_base.answer_generator import (
+    FIXED_NOT_FOUND_FALLBACK,
+    OpenAIGroundedAnswerGenerator,
+    fallback_answer,
+)
 from app.services.knowledge_base.query_router import (
     SERVICE_FALLBACK_TEXT,
     OpenAIQueryRouter,
@@ -29,9 +36,13 @@ from app.services.knowledge_base.query_router import (
     QueryRoutingResult,
     route_free_text_message,
 )
+from app.services.knowledge_base.retrieval import HybridSearchService
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="scenarios")
 messenger = ScenarioMessenger()
+LOG_EVENT_KB_ANSWERED = "bot_kb_answered"
 
 
 @router.message(CommandStart())
@@ -212,6 +223,8 @@ async def unknown_text_handler(message: Message) -> None:
     )
     if routing_result.route is not None and routing_result.route.route == "menu_help":
         text = MENU_MESSAGE_TEXT
+    elif routing_result.should_search and routing_result.route is not None:
+        text = _answer_searchable_route(routing_result.route)
     else:
         text = routing_result.response_text
 
@@ -245,6 +258,26 @@ def _create_query_context_store() -> QueryContextStore:
     return QueryContextStore(ttl_seconds=settings.query_context_ttl_seconds)
 
 
+@lru_cache(maxsize=1)
+def _create_hybrid_search_service() -> HybridSearchService:
+    return HybridSearchService()
+
+
+@lru_cache(maxsize=1)
+def _create_answer_generator() -> OpenAIGroundedAnswerGenerator:
+    settings = get_settings()
+    api_key = settings.openai_api_key_value
+    model = settings.openai_answer_model
+    if api_key is None or model is None:
+        msg = "answer_generator_unavailable:missing_openai_api_key_or_model"
+        raise RuntimeError(msg)
+    return OpenAIGroundedAnswerGenerator(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=settings.openai_answer_timeout_seconds,
+    )
+
+
 def _route_free_text_for_message(*, chat_id: int, user_id: int, text: str) -> QueryRoutingResult:
     try:
         query_router = _create_query_router()
@@ -261,3 +294,42 @@ def _route_free_text_for_message(*, chat_id: int, user_id: int, text: str) -> Qu
         context_key=QueryContextKey(chat_id=chat_id, user_id=user_id),
         message=text,
     )
+
+
+def _answer_searchable_route(route) -> str:
+    started_at = time.perf_counter()
+    vector_count = 0
+    lexical_count = 0
+    answer_result = fallback_answer()
+    try:
+        search_result = _create_hybrid_search_service().search(route)
+        vector_count = search_result.vector_result_count
+        lexical_count = search_result.lexical_result_count
+        answer_result = _create_answer_generator().answer(
+            route=route,
+            candidates=search_result.candidates,
+        )
+        return answer_result.answer_text
+    except Exception:
+        logger.warning("bot_kb_answer_failed", exc_info=True)
+        return FIXED_NOT_FOUND_FALLBACK
+    finally:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            (
+                "%s route=%s topic_hint=%s direction_hint=%s canonical_question=%r "
+                "vector_candidate_count=%s "
+                "lexical_candidate_count=%s accepted_candidate_ids=%s answer_state=%s "
+                "elapsed_ms=%s"
+            ),
+            LOG_EVENT_KB_ANSWERED,
+            route.route,
+            route.topic_hint,
+            route.direction_hint,
+            route.canonical_question_uk,
+            vector_count,
+            lexical_count,
+            ",".join(answer_result.accepted_candidate_ids),
+            answer_result.answer_state,
+            elapsed_ms,
+        )

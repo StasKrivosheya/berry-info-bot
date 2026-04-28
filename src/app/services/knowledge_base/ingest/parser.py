@@ -27,6 +27,11 @@ from app.services.knowledge_base.normalizer import (
     prettify_title,
     slugify,
 )
+from app.services.knowledge_base.taxonomy import (
+    DEFAULT_TAXONOMY_PATH,
+    KnowledgeBaseTaxonomy,
+    load_taxonomy,
+)
 from app.services.knowledge_base.types import (
     BatchParseResult,
     FileParseError,
@@ -55,11 +60,13 @@ def parse_knowledge_base(
     input_dir: Path,
     output_dir: Path,
     config_path: Path | None = None,
+    taxonomy_path: Path | None = DEFAULT_TAXONOMY_PATH,
     source_formats: tuple[SelectableSourceFormat, ...] | None = None,
 ) -> BatchParseResult:
     """Parse CSV and XLSX sources into markdown plus a manifest."""
 
     config = load_parse_config_impl(config_path)
+    taxonomy = load_taxonomy(taxonomy_path) if taxonomy_path is not None else None
     allowed_source_formats = source_formats or config.source_formats
 
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +104,13 @@ def parse_knowledge_base(
                 source_format,
             )
             try:
-                entry, file_stats = _parse_csv_source(source_path, markdown_dir, config, override)
+                entry, file_stats = _parse_csv_source(
+                    source_path,
+                    markdown_dir,
+                    config,
+                    override,
+                    taxonomy,
+                )
                 entries.append(entry)
                 stats.append(file_stats)
                 logger.info(
@@ -191,6 +204,7 @@ def parse_knowledge_base(
                     markdown_dir=markdown_dir,
                     config=config,
                     override=override,
+                    taxonomy=taxonomy,
                 )
                 entries.append(entry)
                 stats.append(file_stats)
@@ -264,6 +278,7 @@ def _parse_csv_source(
     markdown_dir: Path,
     config: ParseConfig,
     override: SourceOverride,
+    taxonomy: KnowledgeBaseTaxonomy | None,
 ) -> tuple[ManifestEntry, FileParseStats]:
     source_slug = slugify(csv_path.stem)
     cleanup_source_slugs = _build_cleanup_source_slugs(source_slug, csv_path.stem)
@@ -300,6 +315,7 @@ def _parse_csv_source(
         row_count=prepared_table.row_count,
         non_empty_cell_count=prepared_table.non_empty_cell_count,
         parse_mode=parse_mode,
+        taxonomy=taxonomy,
         cleanup_source_slugs=cleanup_source_slugs,
     )
 
@@ -311,6 +327,7 @@ def _parse_xlsx_sheet(
     markdown_dir: Path,
     config: ParseConfig,
     override: SourceOverride,
+    taxonomy: KnowledgeBaseTaxonomy | None,
 ) -> tuple[ManifestEntry, FileParseStats]:
     source_key = f"{workbook_path.stem}-{sheet.sheet_name}"
     source_slug = slugify(source_key)
@@ -364,6 +381,7 @@ def _parse_xlsx_sheet(
         row_count=row_count,
         non_empty_cell_count=non_empty_cell_count,
         parse_mode=parse_mode,
+        taxonomy=taxonomy,
         cleanup_source_slugs=cleanup_source_slugs,
     )
 
@@ -384,6 +402,7 @@ def _finalize_parse_result(
     row_count: int,
     non_empty_cell_count: int,
     parse_mode: str,
+    taxonomy: KnowledgeBaseTaxonomy | None,
     cleanup_source_slugs: tuple[str, ...] = (),
 ) -> tuple[ManifestEntry, FileParseStats]:
     docs = sorted(docs, key=lambda doc: doc.file_name.casefold())
@@ -393,6 +412,16 @@ def _finalize_parse_result(
     output_files = [f"{MARKDOWN_DIRNAME}/{document.file_name}" for document in docs]
     content_hash = compute_content_hash([document.content for document in docs])
     updated_at_utc = datetime.now(tz=UTC).isoformat()
+    taxonomy_match = (
+        taxonomy.match_source(
+            source_file=source_file,
+            sheet_name=sheet_name,
+            source_category=category,
+            logical_id=logical_id,
+        )
+        if taxonomy is not None
+        else None
+    )
 
     entry = ManifestEntry(
         source_file=source_file,
@@ -408,6 +437,9 @@ def _finalize_parse_result(
         row_count=row_count,
         non_empty_cell_count=non_empty_cell_count,
         content_hash_sha256=content_hash,
+        direction_id=taxonomy_match.direction_id if taxonomy_match is not None else None,
+        topic_ids=taxonomy_match.topic_ids if taxonomy_match is not None else (),
+        period_label=taxonomy_match.period_label if taxonomy_match is not None else None,
     )
     stats = FileParseStats(
         source_file=source_file,

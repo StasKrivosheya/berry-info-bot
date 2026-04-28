@@ -82,6 +82,42 @@ def test_menu_help_route_shows_main_menu(monkeypatch) -> None:
     assert bot.calls[0]["reply_markup"] is not None
 
 
+def test_kb_query_route_uses_answer_generation(monkeypatch) -> None:
+    bot = FakeBot()
+    route = QueryRoute(
+        route="kb_query",
+        original_message="Які є програми?",
+        canonical_question_uk="Які програми є у Berry Land?",  # noqa: RUF001
+        vector_query_uk="програми Berry Land",
+        lexical_keywords=["програми"],
+        lexical_phrases=["програми Berry Land"],
+        confidence=0.93,
+    )
+    answered: list[QueryRoute] = []
+
+    monkeypatch.setattr(
+        scenarios,
+        "_route_free_text_for_message",
+        lambda **kwargs: QueryRoutingResult(
+            route=route,
+            response_text="service text",
+            should_search=True,
+        ),
+    )
+
+    def fake_answer(search_route: QueryRoute) -> str:
+        answered.append(search_route)
+        return "Є програми для дітей."
+
+    monkeypatch.setattr(scenarios, "_answer_searchable_route", fake_answer)
+
+    asyncio.run(scenarios.unknown_text_handler(FakeMessage(bot, "Які є програми?")))
+
+    assert answered == [route]
+    assert [call["text"] for call in bot.calls] == ["Є програми для дітей."]
+    assert bot.calls[0]["reply_markup"] is not None
+
+
 def test_unknown_command_does_not_use_llm_router(monkeypatch) -> None:
     bot = FakeBot()
 

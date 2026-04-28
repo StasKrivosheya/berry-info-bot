@@ -7,6 +7,8 @@ from typing import Literal, Protocol
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.knowledge_base.taxonomy import get_default_taxonomy
+
 # ruff: noqa: RUF001
 
 QueryRouteName = Literal[
@@ -31,7 +33,7 @@ SERVICE_FALLBACK_TEXT = (
 )
 FOLLOW_UP_CLARIFICATION_TEXT = "Уточніть, будь ласка, про що саме ви питаєте."
 
-QUERY_ROUTER_PROMPT = """
+QUERY_ROUTER_BASE_PROMPT = """
 You route Berry Land Telegram messages. Return only the QueryRoute schema.
 
 Routes:
@@ -47,11 +49,25 @@ Rules:
 - reply_language must be "uk".
 - For kb_query and resolvable follow_up, fill canonical_question_uk, vector_query_uk,
   lexical_keywords, lexical_phrases, and confidence.
+- For kb_query and resolvable follow_up, set topic_hint and direction_hint only from the
+  controlled vocabulary below. Use null when unsure.
+- direction_hint is the business direction: OP/SV/camping/birthdays/school excursions.
+- topic_hint is the question topic: tickets/schedule/programs/transfer/food/etc.
+- target_date is a concise date/month/season from the user message when present.
+- If the user asks about price, schedule, transfer, food, services, or rules without a
+  direction, leave direction_hint empty; the app will ask a deterministic clarification.
+- Never invent category names.
 - Translate Russian/English user questions into concise Ukrainian canonical/vector queries.
 - Use previous context only for a short follow_up; set use_context=true when used.
 - If follow_up has no useful context, leave query fields empty and ask for clarification later.
 - Do not answer the user and do not reveal reasoning.
 """.strip()
+QUERY_ROUTER_PROMPT = "\n\n".join(
+    (
+        QUERY_ROUTER_BASE_PROMPT,
+        get_default_taxonomy().build_router_prompt_section(),
+    )
+)
 
 
 class QueryRoute(BaseModel):
@@ -67,6 +83,9 @@ class QueryRoute(BaseModel):
     lexical_keywords: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
     lexical_phrases: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
     use_context: bool = False
+    topic_hint: str | None = Field(default=None, max_length=80)
+    direction_hint: str | None = Field(default=None, max_length=80)
+    target_date: str | None = Field(default=None, max_length=80)
     category_hint: str | None = Field(default=None, max_length=80)
     logical_id_hint: str | None = Field(default=None, max_length=120)
     confidence: float = Field(ge=0.0, le=1.0)
@@ -75,6 +94,9 @@ class QueryRoute(BaseModel):
         "original_message",
         "canonical_question_uk",
         "vector_query_uk",
+        "topic_hint",
+        "direction_hint",
+        "target_date",
         "category_hint",
         "logical_id_hint",
         mode="before",
@@ -132,6 +154,9 @@ class QueryContext:
     vector_query_uk: str
     lexical_keywords: tuple[str, ...]
     lexical_phrases: tuple[str, ...]
+    topic_hint: str | None
+    direction_hint: str | None
+    target_date: str | None
     category_hint: str | None
     logical_id_hint: str | None
 
@@ -187,6 +212,9 @@ class QueryContextStore:
                 vector_query_uk=route.vector_query_uk,
                 lexical_keywords=tuple(route.lexical_keywords),
                 lexical_phrases=tuple(route.lexical_phrases),
+                topic_hint=route.topic_hint,
+                direction_hint=route.direction_hint,
+                target_date=route.target_date,
                 category_hint=route.category_hint,
                 logical_id_hint=route.logical_id_hint,
             ),
@@ -237,6 +265,9 @@ def build_query_router_input(message: str, *, context: QueryContext | None) -> s
             f"- vector_query_uk: {context.vector_query_uk}",
             f"- lexical_keywords: {', '.join(context.lexical_keywords) or '(none)'}",
             f"- lexical_phrases: {', '.join(context.lexical_phrases) or '(none)'}",
+            f"- topic_hint: {context.topic_hint or '(none)'}",
+            f"- direction_hint: {context.direction_hint or '(none)'}",
+            f"- target_date: {context.target_date or '(none)'}",
             f"- category_hint: {context.category_hint or '(none)'}",
             f"- logical_id_hint: {context.logical_id_hint or '(none)'}",
         ]
@@ -265,6 +296,7 @@ def route_free_text_message(
             response_text=SERVICE_FALLBACK_TEXT,
             should_search=False,
         )
+    route = normalize_route_taxonomy(route, context=context)
 
     if route.route == "menu_help":
         return QueryRoutingResult(
@@ -284,6 +316,17 @@ def route_free_text_message(
 
     if route.route in {"kb_query", "follow_up"}:
         context_store.save(context_key, route)
+        taxonomy = get_default_taxonomy()
+        if taxonomy.should_clarify_direction(
+            topic_id=route.topic_hint,
+            direction_id=route.direction_hint,
+        ):
+            return QueryRoutingResult(
+                route=route,
+                response_text=taxonomy.build_direction_clarification_text(route.topic_hint),
+                should_search=False,
+                used_context=route.use_context,
+            )
         return QueryRoutingResult(
             route=route,
             response_text=SERVICE_FALLBACK_TEXT,
@@ -296,4 +339,55 @@ def route_free_text_message(
         response_text=SERVICE_FALLBACK_TEXT,
         should_search=False,
         used_context=route.use_context,
+    )
+
+
+def normalize_route_taxonomy(
+    route: QueryRoute,
+    *,
+    context: QueryContext | None,
+) -> QueryRoute:
+    taxonomy = get_default_taxonomy()
+    route_text = "\n".join(
+        part
+        for part in (
+            route.original_message,
+            route.canonical_question_uk or "",
+            route.vector_query_uk or "",
+            " ".join(route.lexical_keywords),
+            " ".join(route.lexical_phrases),
+        )
+        if part
+    )
+    topic_hint = taxonomy.normalize_topic_id(route.topic_hint)
+    if topic_hint is None:
+        topic_hint = taxonomy.normalize_topic_id(route.category_hint)
+    if topic_hint is None:
+        inferred_topics = taxonomy.infer_topic_ids_from_text(route_text)
+        topic_hint = inferred_topics[0] if inferred_topics else None
+    if topic_hint is None and route.use_context and context is not None:
+        topic_hint = context.topic_hint
+
+    direction_hint = taxonomy.normalize_direction_id(route.direction_hint)
+    if direction_hint is None:
+        direction_hint = taxonomy.normalize_direction_id(route.category_hint)
+    if direction_hint is None:
+        direction_hint = taxonomy.infer_direction_id_from_text(route_text)
+    if direction_hint is None and topic_hint is not None:
+        topic = taxonomy.topics.get(topic_hint)
+        if topic is not None:
+            direction_hint = taxonomy.normalize_direction_id(topic.default_direction_id)
+    if direction_hint is None and route.use_context and context is not None:
+        direction_hint = context.direction_hint
+
+    target_date = route.target_date
+    if target_date is None and route.use_context and context is not None:
+        target_date = context.target_date
+
+    return route.model_copy(
+        update={
+            "topic_hint": topic_hint,
+            "direction_hint": direction_hint,
+            "target_date": target_date,
+        }
     )

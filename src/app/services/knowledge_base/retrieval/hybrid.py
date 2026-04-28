@@ -17,6 +17,7 @@ from app.services.knowledge_base.retrieval.lexical import (
     SQLiteLexicalIndex,
 )
 from app.services.knowledge_base.retrieval.service import KnowledgeBaseRetrievalService
+from app.services.knowledge_base.taxonomy import get_default_taxonomy
 from app.services.knowledge_base.types_openai import SearchHit, SearchResponse
 
 HybridSource = Literal["vector", "lexical", "both"]
@@ -36,6 +37,10 @@ class HybridCandidate:
     logical_id: str
     section_id: str
     category: str
+    source_category: str
+    direction_id: str | None
+    topic_ids: tuple[str, ...]
+    period_label: str | None
     heading_path: tuple[str, ...]
     content: str
     source: HybridSource
@@ -82,8 +87,8 @@ class HybridSearchService:
             max_num_results=None,
             rewrite_query=False,
             score_threshold=None,
-            category=route.category_hint,
-            logical_id=route.logical_id_hint,
+            category=None,
+            logical_id=None,
             attribute_filters=None,
         )
         lexical_hits = self._lexical_index.search(
@@ -91,13 +96,14 @@ class HybridSearchService:
             phrases=tuple(route.lexical_phrases),
             query=route.vector_query_uk,
             max_results=max(DEFAULT_LEXICAL_MAX_RESULTS, self._max_candidates),
-            category_hint=route.category_hint,
-            logical_id_hint=route.logical_id_hint,
+            category_hint=None,
+            logical_id_hint=None,
         )
         candidates = merge_candidates(
             vector_hits=tuple(vector_response.results),
             lexical_hits=lexical_hits,
             structure_reader=self._structure_reader,
+            route=route,
             max_candidates=self._max_candidates,
         )
         return HybridSearchResult(
@@ -112,6 +118,7 @@ def merge_candidates(
     vector_hits: tuple[SearchHit, ...],
     lexical_hits: tuple[LexicalSearchHit, ...],
     structure_reader: KnowledgeBaseStructureReader,
+    route: QueryRoute | None = None,
     max_candidates: int = DEFAULT_HYBRID_MAX_CANDIDATES,
 ) -> tuple[HybridCandidate, ...]:
     merged: dict[str, HybridCandidate] = {}
@@ -124,6 +131,10 @@ def merge_candidates(
             logical_id=candidate.logical_id,
             section_id=candidate.section_id,
             category=candidate.category,
+            source_category=candidate.source_category,
+            direction_id=candidate.direction_id,
+            topic_ids=candidate.topic_ids,
+            period_label=candidate.period_label,
             heading_path=candidate.heading_path,
             content=candidate.content,
             source="vector",
@@ -149,6 +160,10 @@ def merge_candidates(
             logical_id=existing.logical_id or hit.candidate.logical_id,
             section_id=existing.section_id or hit.candidate.section_id,
             category=existing.category or hit.candidate.category,
+            source_category=existing.source_category or hit.candidate.source_category,
+            direction_id=existing.direction_id or hit.candidate.direction_id,
+            topic_ids=_merge_topic_ids(existing.topic_ids, hit.candidate.topic_ids),
+            period_label=existing.period_label or hit.candidate.period_label,
             heading_path=hit.candidate.heading_path or existing.heading_path,
             content=hit.candidate.content or existing.content,
             source="both",
@@ -159,8 +174,9 @@ def merge_candidates(
             markdown_path=hit.candidate.markdown_path or existing.markdown_path,
         )
 
+    boosted = tuple(_apply_route_boost(candidate, route=route) for candidate in merged.values())
     ranked = sorted(
-        merged.values(),
+        boosted,
         key=lambda candidate: (
             -candidate.score,
             candidate.source != "both",
@@ -179,15 +195,36 @@ def _candidate_from_vector_hit(
     context = structure_reader.resolve_hit_context(hit)
     logical_id = str(hit.attributes.get("logical_id", "")).strip() or Path(hit.filename).stem
     category = str(hit.attributes.get("category", "")).strip()
+    source_category = str(hit.attributes.get("source_category") or category).strip()
     heading_path = context.heading_path if context is not None else ()
     if not heading_path:
         heading_path = (hit.filename,)
     section_id = stable_section_id(logical_id, heading_path)
+    taxonomy = get_default_taxonomy()
+    taxonomy_match = taxonomy.match_source(
+        source_file=str(hit.attributes.get("source_file") or hit.filename),
+        sheet_name=str(hit.attributes["sheet_name"]) if hit.attributes.get("sheet_name") else None,
+        source_category=source_category,
+        logical_id=logical_id,
+    )
+    direction_id = (
+        taxonomy.normalize_direction_id(str(hit.attributes.get("direction_id") or ""))
+        or taxonomy_match.direction_id
+    )
+    topic_ids = (
+        _split_csv_tuple(hit.attributes.get("topic_ids"))
+        or taxonomy_match.topic_ids
+        or taxonomy.infer_topic_ids_from_text(f"{category}\n{' '.join(heading_path)}\n{hit.text}")
+    )
     return KnowledgeBaseCandidate(
         candidate_id=section_id,
         logical_id=logical_id,
         section_id=section_id,
         category=category,
+        source_category=source_category,
+        direction_id=direction_id,
+        topic_ids=topic_ids,
+        period_label=str(hit.attributes.get("period_label") or "") or taxonomy_match.period_label,
         heading_path=heading_path,
         content=hit.text,
         source_file=context.source_file if context is not None else "",
@@ -221,6 +258,10 @@ def _hybrid_from_lexical_hit(
         logical_id=hit.candidate.logical_id,
         section_id=hit.candidate.section_id,
         category=hit.candidate.category,
+        source_category=hit.candidate.source_category,
+        direction_id=hit.candidate.direction_id,
+        topic_ids=hit.candidate.topic_ids,
+        period_label=hit.candidate.period_label,
         heading_path=hit.candidate.heading_path,
         content=hit.candidate.content,
         source="lexical",
@@ -238,3 +279,61 @@ def _vector_rank_score(score: float, rank: int) -> float:
 
 def _lexical_rank_score(score: float, rank: int) -> float:
     return max(0.0, score) + 1.0 / (rank + 1)
+
+
+def _apply_route_boost(
+    candidate: HybridCandidate,
+    *,
+    route: QueryRoute | None,
+) -> HybridCandidate:
+    if route is None:
+        return candidate
+
+    taxonomy = get_default_taxonomy()
+    direction_id = taxonomy.normalize_direction_id(route.direction_hint)
+    topic_id = taxonomy.normalize_topic_id(route.topic_hint)
+    boost = 0.0
+    if direction_id and candidate.direction_id == direction_id:
+        boost += 0.75
+    elif direction_id and candidate.direction_id and candidate.direction_id != direction_id:
+        boost -= 0.25
+
+    if topic_id and topic_id in candidate.topic_ids:
+        boost += 0.4
+
+    if boost == 0:
+        return candidate
+    return HybridCandidate(
+        candidate_id=candidate.candidate_id,
+        logical_id=candidate.logical_id,
+        section_id=candidate.section_id,
+        category=candidate.category,
+        source_category=candidate.source_category,
+        direction_id=candidate.direction_id,
+        topic_ids=candidate.topic_ids,
+        period_label=candidate.period_label,
+        heading_path=candidate.heading_path,
+        content=candidate.content,
+        source=candidate.source,
+        score=max(0.0, candidate.score + boost),
+        vector_score=candidate.vector_score,
+        lexical_score=candidate.lexical_score,
+        source_file=candidate.source_file,
+        markdown_path=candidate.markdown_path,
+    )
+
+
+def _merge_topic_ids(
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+) -> tuple[str, ...]:
+    values: list[str] = []
+    for topic_id in (*left, *right):
+        if topic_id and topic_id not in values:
+            values.append(topic_id)
+    return tuple(values)
+
+
+def _split_csv_tuple(value: object) -> tuple[str, ...]:
+    raw = str(value or "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
