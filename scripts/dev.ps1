@@ -45,10 +45,9 @@ switch ($Task) {
         & $Pytest -q
     }
     "docker-up" {
-        $dockerEnv = Join-Path $RepoRoot ".env.docker"
+        $dockerEnv = Join-Path $RepoRoot ".env"
         if (-not (Test-Path $dockerEnv)) {
-            # Docker mode expects DB host `db`, so we require the docker-specific env file.
-            throw ".env.docker is missing. Create it from .env.docker.example before running docker tasks."
+            throw ".env is missing. Create it from .env.example before running docker tasks."
         }
         & $Docker compose up --build
     }
