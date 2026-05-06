@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from functools import lru_cache
 
 from aiogram import F, Router
+from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -44,6 +46,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="scenarios")
 messenger = ScenarioMessenger()
 LOG_EVENT_KB_ANSWERED = "bot_kb_answered"
+TELEGRAM_TYPING_REFRESH_SECONDS = 4.0
 
 
 @router.message(CommandStart())
@@ -217,26 +220,33 @@ async def unknown_text_handler(message: Message) -> None:
     if message.from_user is None or message.text is None:
         return
 
-    routing_result = await asyncio.to_thread(
-        _route_free_text_for_message,
-        chat_id=message.chat.id,
-        user_id=message.from_user.id,
-        text=message.text,
-    )
-    if routing_result.route is not None and routing_result.route.route == "menu_help":
-        text = MENU_MESSAGE_TEXT
-    elif routing_result.should_search and routing_result.route is not None:
-        text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
-    else:
-        text = routing_result.response_text
+    await _send_typing_once(message.bot, message.chat.id)
+    typing_task = asyncio.create_task(_refresh_typing_until_done(message.bot, message.chat.id))
+    try:
+        routing_result = await asyncio.to_thread(
+            _route_free_text_for_message,
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            text=message.text,
+        )
+        if routing_result.route is not None and routing_result.route.route == "menu_help":
+            text = MENU_MESSAGE_TEXT
+        elif routing_result.should_search and routing_result.route is not None:
+            text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
+        else:
+            text = routing_result.response_text
 
-    await messenger.send(
-        bot=message.bot,
-        chat_id=message.chat.id,
-        user_id=message.from_user.id,
-        text=text,
-        reply_markup=build_main_menu_keyboard(),
-    )
+        await messenger.send(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            text=text,
+            reply_markup=build_main_menu_keyboard(),
+        )
+    finally:
+        typing_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await typing_task
 
 
 @lru_cache(maxsize=1)
@@ -298,6 +308,17 @@ def _route_free_text_for_message(*, chat_id: int, user_id: int, text: str) -> Qu
         context_key=QueryContextKey(chat_id=chat_id, user_id=user_id),
         message=text,
     )
+
+
+async def _send_typing_once(bot, chat_id: int) -> None:
+    with contextlib.suppress(Exception):
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+
+async def _refresh_typing_until_done(bot, chat_id: int) -> None:
+    while True:
+        await asyncio.sleep(TELEGRAM_TYPING_REFRESH_SECONDS)
+        await _send_typing_once(bot, chat_id)
 
 
 def _answer_searchable_route(route) -> str:
