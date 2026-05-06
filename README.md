@@ -29,20 +29,30 @@ Required:
 - `TELEGRAM_BOT_TOKEN`
 - `OPENAI_API_KEY`
 - `OPENAI_QUERY_ROUTER_MODEL`
+- `OPENAI_QUERY_ROUTER_REASONING_EFFORT`
 - `OPENAI_ANSWER_MODEL`
+- `OPENAI_ANSWER_REASONING_EFFORT`
 - `OPENAI_VECTOR_STORE_ID`
 - `KB_MANIFEST_PATH`
 - `KB_LEXICAL_INDEX_PATH`
 
 Useful defaults:
 
+- `OPENAI_QUERY_ROUTER_MODEL=gpt-5.4-nano`
+- `OPENAI_QUERY_ROUTER_REASONING_EFFORT=none`
 - `OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS=10`
+- `OPENAI_ANSWER_MODEL=gpt-5.4-mini`
+- `OPENAI_ANSWER_REASONING_EFFORT=low`
 - `OPENAI_ANSWER_TIMEOUT_SECONDS=10`
 - `OPENAI_KB_SEARCH_MAX_RESULTS=3`
 - `OPENAI_KB_SCORE_THRESHOLD=0.5`
 - `QUERY_CONTEXT_TTL_SECONDS=900`
 
-Do not commit `.env`, `.env.local`, `.env.docker`, or secrets.
+The runtime reads `.env` only. `.env.local` is ignored by the app and should be treated only as a
+legacy local file name. Do not commit `.env`, `.env.local`, `.env.docker`, or secrets.
+
+Leave `OPENAI_QUERY_ROUTER_REASONING_EFFORT` or `OPENAI_ANSWER_REASONING_EFFORT` empty when using
+a model that does not support the Responses API `reasoning` parameter.
 
 ## Local Run
 
@@ -137,7 +147,7 @@ Future inactive directions are already named in taxonomy: `camping`, `birthdays`
 2. Normal free text goes to one structured routing/canonicalization call.
 3. Router returns route, Ukrainian canonical question, vector query, lexical terms, `topic_hint`,
    `direction_hint`, and optional `target_date`.
-4. Hybrid search runs broad vector and lexical retrieval.
+4. Hybrid search runs broad vector and local lexical retrieval.
 5. `topic_hint` and `direction_hint` are ranking boosts, not hard filters.
 6. Candidate IDs are deduplicated and bounded.
 7. Answer model receives candidates as untrusted data.
@@ -154,12 +164,31 @@ Future inactive directions are already named in taxonomy: `camping`, `birthdays`
 - Direction/date ambiguity is intentionally conservative.
 - Answer quality depends on KB source freshness and vector-store sync.
 
+## Runtime Cost Controls
+
+- Router: default `gpt-5.4-nano` with `reasoning=none`.
+- Answer generator: default `gpt-5.4-mini` with `reasoning=low`.
+- Vector search count: `OPENAI_KB_SEARCH_MAX_RESULTS`.
+- Local lexical search count: `DEFAULT_LEXICAL_MAX_RESULTS` in
+  `src/app/services/knowledge_base/retrieval/lexical.py`.
+- Answer LLM candidate cap: `ANSWER_INPUT_MAX_CANDIDATES` and
+  `ANSWER_CANDIDATE_MAX_CHARS` in `src/app/services/knowledge_base/answer_generator.py`.
+- Telegram free-text routing/search/answer runs via `asyncio.to_thread`; this avoids blocking the
+  async bot loop and does not add extra OpenAI calls, tokens, vector searches, or API cost.
+
 ## Checks
 
 ```powershell
 .\.venv\Scripts\ruff.exe check src tests
 .\.venv\Scripts\pytest.exe -q
 .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+```
+
+Opt-in real OpenAI evals are skipped by default:
+
+```powershell
+$env:RUN_OPENAI_EVALS='1'
+.\.venv\Scripts\pytest.exe tests\test_openai_llm_evals.py -q
 ```
 
 For quick vector-store smoke testing:
