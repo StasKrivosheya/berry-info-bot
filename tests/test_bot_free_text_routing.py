@@ -37,6 +37,11 @@ class FakeMessage:
 def test_free_text_handler_uses_structured_route_contract(monkeypatch) -> None:
     bot = FakeBot()
     captured: list[dict[str, object]] = []
+    to_thread_calls: list[str] = []
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        to_thread_calls.append(func.__name__)
+        return func(*args, **kwargs)
 
     def fake_route_free_text(*, chat_id: int, user_id: int, text: str) -> QueryRoutingResult:
         captured.append({"chat_id": chat_id, "user_id": user_id, "text": text})
@@ -51,10 +56,12 @@ def test_free_text_handler_uses_structured_route_contract(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(scenarios, "_route_free_text_for_message", fake_route_free_text)
+    monkeypatch.setattr(scenarios.asyncio, "to_thread", fake_to_thread)
 
     asyncio.run(scenarios.unknown_text_handler(FakeMessage(bot, "Привіт")))
 
     assert captured == [{"chat_id": 2002, "user_id": 1001, "text": "Привіт"}]
+    assert to_thread_calls == ["fake_route_free_text"]
     assert [call["text"] for call in bot.calls] == ["service text"]
     assert bot.calls[0]["reply_markup"] is not None
 
@@ -84,6 +91,12 @@ def test_menu_help_route_shows_main_menu(monkeypatch) -> None:
 
 def test_kb_query_route_uses_answer_generation(monkeypatch) -> None:
     bot = FakeBot()
+    to_thread_calls: list[str] = []
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        to_thread_calls.append(func.__name__)
+        return func(*args, **kwargs)
+
     route = QueryRoute(
         route="kb_query",
         original_message="Які є програми?",
@@ -110,12 +123,44 @@ def test_kb_query_route_uses_answer_generation(monkeypatch) -> None:
         return "Є програми для дітей."
 
     monkeypatch.setattr(scenarios, "_answer_searchable_route", fake_answer)
+    monkeypatch.setattr(scenarios.asyncio, "to_thread", fake_to_thread)
 
     asyncio.run(scenarios.unknown_text_handler(FakeMessage(bot, "Які є програми?")))
 
+    assert to_thread_calls == ["<lambda>", "fake_answer"]
     assert answered == [route]
     assert [call["text"] for call in bot.calls] == ["Є програми для дітей."]
     assert bot.calls[0]["reply_markup"] is not None
+
+
+def test_dynamic_rag_answer_is_sent_as_plain_text(monkeypatch) -> None:
+    bot = FakeBot()
+    answer_text = "<b>price</b> 100 uah"
+    route = QueryRoute(
+        route="kb_query",
+        original_message="price?",
+        canonical_question_uk="price?",
+        vector_query_uk="price?",
+        lexical_keywords=["price"],
+        lexical_phrases=["price"],
+        confidence=0.93,
+    )
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(
+        scenarios,
+        "_route_free_text_for_message",
+        lambda **kwargs: QueryRoutingResult(route=route, response_text="", should_search=True),
+    )
+    monkeypatch.setattr(scenarios, "_answer_searchable_route", lambda route: answer_text)
+    monkeypatch.setattr(scenarios.asyncio, "to_thread", fake_to_thread)
+
+    asyncio.run(scenarios.unknown_text_handler(FakeMessage(bot, "price?")))
+
+    assert bot.calls[0]["text"] == answer_text
+    assert "parse_mode" not in bot.calls[0]
 
 
 def test_unknown_command_does_not_use_llm_router(monkeypatch) -> None:

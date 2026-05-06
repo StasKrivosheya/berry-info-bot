@@ -7,6 +7,7 @@ from typing import Literal, Protocol
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.config import OpenAIReasoningEffort
 from app.services.knowledge_base.taxonomy import get_default_taxonomy
 
 # ruff: noqa: RUF001
@@ -230,24 +231,27 @@ class OpenAIQueryRouter:
         api_key: str,
         model: str,
         timeout_seconds: int,
+        reasoning_effort: OpenAIReasoningEffort | None = None,
         client: OpenAI | None = None,
     ) -> None:
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._reasoning_effort = reasoning_effort
         self._client = client or OpenAI(api_key=api_key, timeout=timeout_seconds)
 
     def route(self, message: str, *, context: QueryContext | None = None) -> QueryRoute:
-        response = self._client.responses.parse(
-            model=self._model,
-            instructions=QUERY_ROUTER_PROMPT,
-            input=build_query_router_input(message, context=context),
-            text_format=QueryRoute,
-            temperature=0,
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-            reasoning={"effort": "none"},
-            store=False,
-            timeout=self._timeout_seconds,
-        )
+        payload = {
+            "model": self._model,
+            "instructions": QUERY_ROUTER_PROMPT,
+            "input": build_query_router_input(message, context=context),
+            "text_format": QueryRoute,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "store": False,
+            "timeout": self._timeout_seconds,
+        }
+        if self._reasoning_effort is not None:
+            payload["reasoning"] = {"effort": self._reasoning_effort}
+        response = self._client.responses.parse(**payload)
         parsed = response.output_parsed
         if parsed is None:
             msg = "OpenAI returned no parsed query route."
@@ -359,6 +363,7 @@ def normalize_route_taxonomy(
         )
         if part
     )
+    direction_text = route.original_message
     topic_hint = taxonomy.normalize_topic_id(route.topic_hint)
     if topic_hint is None:
         topic_hint = taxonomy.normalize_topic_id(route.category_hint)
@@ -372,11 +377,7 @@ def normalize_route_taxonomy(
     if direction_hint is None:
         direction_hint = taxonomy.normalize_direction_id(route.category_hint)
     if direction_hint is None:
-        direction_hint = taxonomy.infer_direction_id_from_text(route_text)
-    if direction_hint is None and topic_hint is not None:
-        topic = taxonomy.topics.get(topic_hint)
-        if topic is not None:
-            direction_hint = taxonomy.normalize_direction_id(topic.default_direction_id)
+        direction_hint = taxonomy.infer_direction_id_from_text(direction_text)
     if direction_hint is None and route.use_context and context is not None:
         direction_hint = context.direction_hint
 

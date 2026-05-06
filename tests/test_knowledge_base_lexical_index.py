@@ -6,6 +6,7 @@ from pathlib import Path
 from app.services.knowledge_base.cli import main as kb_rebuild_main
 from app.services.knowledge_base.retrieval.candidates import build_candidates_from_manifest
 from app.services.knowledge_base.retrieval.lexical import (
+    DEFAULT_LEXICAL_MAX_RESULTS,
     SQLiteLexicalIndex,
     build_lexical_index_from_manifest,
 )
@@ -111,6 +112,10 @@ def test_sqlite_lexical_index_returns_empty_for_no_results(tmp_path: Path) -> No
     hits = SQLiteLexicalIndex(index_path).search(keywords=("аквапарк",), max_results=5)
 
     assert hits == ()
+
+
+def test_default_lexical_result_budget_is_six() -> None:
+    assert DEFAULT_LEXICAL_MAX_RESULTS == 6
 
 
 def test_kb_rebuild_cli_builds_lexical_index(tmp_path: Path) -> None:

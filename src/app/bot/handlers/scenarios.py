@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from functools import lru_cache
@@ -216,7 +217,8 @@ async def unknown_text_handler(message: Message) -> None:
     if message.from_user is None or message.text is None:
         return
 
-    routing_result = _route_free_text_for_message(
+    routing_result = await asyncio.to_thread(
+        _route_free_text_for_message,
         chat_id=message.chat.id,
         user_id=message.from_user.id,
         text=message.text,
@@ -224,7 +226,7 @@ async def unknown_text_handler(message: Message) -> None:
     if routing_result.route is not None and routing_result.route.route == "menu_help":
         text = MENU_MESSAGE_TEXT
     elif routing_result.should_search and routing_result.route is not None:
-        text = _answer_searchable_route(routing_result.route)
+        text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
     else:
         text = routing_result.response_text
 
@@ -249,6 +251,7 @@ def _create_query_router() -> OpenAIQueryRouter:
         api_key=api_key,
         model=model,
         timeout_seconds=settings.openai_query_router_timeout_seconds,
+        reasoning_effort=settings.openai_query_router_reasoning_effort,
     )
 
 
@@ -275,6 +278,7 @@ def _create_answer_generator() -> OpenAIGroundedAnswerGenerator:
         api_key=api_key,
         model=model,
         timeout_seconds=settings.openai_answer_timeout_seconds,
+        reasoning_effort=settings.openai_answer_reasoning_effort,
     )
 
 

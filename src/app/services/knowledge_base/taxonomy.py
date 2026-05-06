@@ -27,7 +27,6 @@ class TopicDefinition:
     label_uk: str
     aliases: tuple[str, ...]
     direction_sensitive: bool = False
-    default_direction_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +246,6 @@ def load_taxonomy(path: Path = DEFAULT_TAXONOMY_PATH) -> KnowledgeBaseTaxonomy:
             label_uk=_required_str(raw_topic, "label_uk"),
             aliases=_str_tuple(raw_topic.get("aliases")),
             direction_sensitive=bool(raw_topic.get("direction_sensitive", False)),
-            default_direction_id=_optional_str(raw_topic.get("default_direction_id")),
         )
         for topic_id, raw_topic in _dict(payload.get("topics")).items()
     )

@@ -110,7 +110,7 @@ def test_smalltalk_returns_service_text_and_no_search() -> None:
     assert result.should_search is False
 
 
-def test_ukrainian_kb_question_produces_searchable_route() -> None:
+def test_ukrainian_program_question_without_direction_clarifies() -> None:
     route = _route(
         "kb_query",
         original_message="Які у вас є програми?",
@@ -128,11 +128,11 @@ def test_ukrainian_kb_question_produces_searchable_route() -> None:
     )
 
     assert result.route is not None
-    assert result.should_search is True
+    assert result.should_search is False
     assert result.route.canonical_question_uk == "Які програми доступні в Berry Land?"
     assert result.route.vector_query_uk == "організовані програми Berry Land"
     assert result.route.topic_hint == "programs"
-    assert result.route.direction_hint == "op"
+    assert result.route.direction_hint is None
 
 
 def test_direction_sensitive_topic_without_direction_asks_for_clarification() -> None:
@@ -184,7 +184,7 @@ def test_controlled_direction_allows_search_for_sensitive_topic() -> None:
     assert result.should_search is True
 
 
-def test_program_topic_gets_default_op_direction() -> None:
+def test_program_topic_without_direction_asks_for_clarification() -> None:
     route = _route(
         "kb_query",
         original_message="Які є види програм?",
@@ -200,6 +200,30 @@ def test_program_topic_gets_default_op_direction() -> None:
         context_store=_store(),
         context_key=_key(),
         message="Які є види програм?",
+    )
+
+    assert result.route is not None
+    assert result.route.direction_hint is None
+    assert result.should_search is False
+
+
+def test_program_topic_with_direction_allows_search() -> None:
+    route = _route(
+        "kb_query",
+        original_message="РЇРєС– С” РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ?",
+        canonical_question_uk="РЇРєС– С” РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ Сѓ Berry Land?",
+        vector_query_uk="РІРёРґРё РѕСЂРіР°РЅС–Р·РѕРІР°РЅРёС… РїСЂРѕРіСЂР°Рј РћРџ Berry Land",
+        lexical_keywords=["РїСЂРѕРіСЂР°РјРё", "РћРџ"],
+        lexical_phrases=["РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ"],
+        topic_hint="programs",
+        direction_hint="op",
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(route),
+        context_store=_store(),
+        context_key=_key(),
+        message="РЇРєС– С” РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ?",
     )
 
     assert result.route is not None
@@ -235,6 +259,7 @@ def test_russian_and_english_questions_return_ukrainian_canonical_queries() -> N
             api_key="test-key",
             model="test-model",
             timeout_seconds=7,
+            reasoning_effort="none",
             client=client,
         )
 
@@ -248,6 +273,7 @@ def test_russian_and_english_questions_return_ukrainian_canonical_queries() -> N
         assert call["text_format"] is QueryRoute
         assert call["instructions"] == QUERY_ROUTER_PROMPT
         assert call["reasoning"] == {"effort": "none"}
+        assert "temperature" not in call
         assert "Previous context: none" in str(call["input"])
 
 
@@ -262,6 +288,7 @@ def test_short_follow_up_uses_previous_context_when_available() -> None:
         lexical_keywords=["програми"],
         lexical_phrases=["організовані програми"],
     )
+    first_route = first_route.model_copy(update={"direction_hint": "op"})
     follow_up_route = _route(
         "follow_up",
         original_message="А скільки коштує?",
@@ -329,6 +356,25 @@ def test_malformed_llm_output_fails_safely() -> None:
     assert result.route is None
     assert result.response_text == SERVICE_FALLBACK_TEXT
     assert result.should_search is False
+
+
+def test_reasoning_effort_can_be_omitted_for_legacy_models() -> None:
+    parsed = _route("greeting")
+    client = FakeOpenAIClient(parsed)
+    router = OpenAIQueryRouter(
+        api_key="test-key",
+        model="legacy-model",
+        timeout_seconds=7,
+        reasoning_effort=None,
+        client=client,
+    )
+
+    route = router.route("РџСЂРёРІС–С‚")
+
+    assert route == parsed
+    call = client.responses.calls[0]
+    assert "reasoning" not in call
+    assert "temperature" not in call
 
 
 def test_router_input_includes_previous_context() -> None:

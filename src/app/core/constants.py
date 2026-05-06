@@ -7,9 +7,7 @@ DEFAULT_APP_HOST = "0.0.0.0"
 DEFAULT_APP_PORT = 8080
 DEFAULT_LOG_LEVEL = "INFO"
 
-# Local development uses .env.local first. .env stays as a backward-compatible fallback.
-ENV_FILE_LOCAL = ".env.local"
-ENV_FILE_FALLBACK = ".env"
+ENV_FILE = ".env"
 
 HEALTH_ENDPOINT_PATH = "/health"
 HEALTH_STATUS_OK = "ok"

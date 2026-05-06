@@ -5,10 +5,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.services.knowledge_base.answer_generator import (
+    ANSWER_CANDIDATE_MAX_CHARS,
+    ANSWER_INPUT_MAX_CANDIDATES,
     FIXED_NOT_FOUND_FALLBACK,
     GROUNDING_PROMPT,
     GroundedAnswer,
     OpenAIGroundedAnswerGenerator,
+    prepare_answer_candidates,
 )
 from app.services.knowledge_base.query_router import QueryRoute
 from app.services.knowledge_base.retrieval.hybrid import HybridCandidate
@@ -68,11 +71,16 @@ def _candidate(
     )
 
 
-def _generator(client: FakeOpenAIClient) -> OpenAIGroundedAnswerGenerator:
+def _generator(
+    client: FakeOpenAIClient,
+    *,
+    reasoning_effort: str | None = None,
+) -> OpenAIGroundedAnswerGenerator:
     return OpenAIGroundedAnswerGenerator(
         api_key="test-key",
         model="test-model",
         timeout_seconds=7,
+        reasoning_effort=reasoning_effort,
         client=client,
     )
 
@@ -95,6 +103,7 @@ def test_evidence_answer_uses_accepted_candidate_ids() -> None:
     assert call["text_format"] is GroundedAnswer
     assert call["instructions"] == GROUNDING_PROMPT
     assert "candidate_id=transfer:1" in str(call["input"])
+    assert "temperature" not in call
 
 
 def test_irrelevant_candidates_return_fixed_fallback() -> None:
@@ -190,3 +199,53 @@ def test_answer_with_claim_absent_from_evidence_falls_back() -> None:
     )
 
     assert result.answer_text == FIXED_NOT_FOUND_FALLBACK
+
+
+def test_answer_reasoning_effort_is_configurable() -> None:
+    parsed = GroundedAnswer(
+        accepted_candidate_ids=["transfer:1"],
+        rejected_candidate_ids=[],
+        answer_state="answered",
+        answer_text="РўСЂР°РЅСЃС„РµСЂ РєРѕС€С‚СѓС” 100 РіСЂРЅ.",
+    )
+    client = FakeOpenAIClient(parsed=parsed)
+
+    _generator(client, reasoning_effort="low").answer(
+        route=_route(),
+        candidates=(_candidate(),),
+    )
+
+    call = client.responses.calls[0]
+    assert call["reasoning"] == {"effort": "low"}
+    assert "temperature" not in call
+
+
+def test_answer_reasoning_effort_can_be_omitted_for_legacy_models() -> None:
+    parsed = GroundedAnswer(
+        accepted_candidate_ids=["transfer:1"],
+        rejected_candidate_ids=[],
+        answer_state="answered",
+        answer_text="РўСЂР°РЅСЃС„РµСЂ РєРѕС€С‚СѓС” 100 РіСЂРЅ.",
+    )
+    client = FakeOpenAIClient(parsed=parsed)
+
+    _generator(client, reasoning_effort=None).answer(
+        route=_route(),
+        candidates=(_candidate(),),
+    )
+
+    call = client.responses.calls[0]
+    assert "reasoning" not in call
+    assert "temperature" not in call
+
+
+def test_answer_candidates_are_bounded_and_trimmed_before_model_call() -> None:
+    candidates = tuple(
+        _candidate(candidate_id=f"transfer:{index}", content="x" * 2000)
+        for index in range(ANSWER_INPUT_MAX_CANDIDATES + 2)
+    )
+
+    prepared = prepare_answer_candidates(candidates)
+
+    assert len(prepared) == ANSWER_INPUT_MAX_CANDIDATES
+    assert all(len(candidate.content) == ANSWER_CANDIDATE_MAX_CHARS for candidate in prepared)

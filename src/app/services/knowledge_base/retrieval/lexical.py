@@ -13,7 +13,7 @@ from app.services.knowledge_base.retrieval.candidates import (
 )
 
 DEFAULT_LEXICAL_INDEX_PATH = Path("data/knowledge_base/processed/kb_lexical.sqlite3")
-DEFAULT_LEXICAL_MAX_RESULTS = 10
+DEFAULT_LEXICAL_MAX_RESULTS = 6
 LOG_EVENT_LEXICAL_INDEX_REBUILT = "kb_lexical_index_rebuilt"
 
 logger = logging.getLogger(__name__)

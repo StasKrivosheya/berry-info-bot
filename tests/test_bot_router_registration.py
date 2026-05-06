@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import Router
 
-from app.bot.factory import create_dispatcher
+from app.bot.factory import create_bot, create_dispatcher
 
 
 def _router_names(router: Router) -> set[str]:
@@ -22,3 +24,12 @@ def test_production_dispatcher_registers_only_production_router() -> None:
     assert "root" in registered_names
     assert "scenarios" in registered_names
     assert "query-debug" not in registered_names
+
+
+def test_production_bot_has_no_global_html_parse_mode() -> None:
+    bot = create_bot("123456:TEST_TOKEN")
+
+    try:
+        assert bot.default.parse_mode is None
+    finally:
+        asyncio.run(bot.session.close())

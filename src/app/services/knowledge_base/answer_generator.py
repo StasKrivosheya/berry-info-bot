@@ -8,6 +8,7 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.config import OpenAIReasoningEffort
 from app.services.knowledge_base.query_router import QueryRoute
 from app.services.knowledge_base.retrieval.hybrid import HybridCandidate
 
@@ -18,6 +19,8 @@ FIXED_NOT_FOUND_FALLBACK = (
     "більш детальної консультації."
 )
 ANSWER_MAX_OUTPUT_TOKENS = 700
+ANSWER_INPUT_MAX_CANDIDATES = 6
+ANSWER_CANDIDATE_MAX_CHARS = 1600
 MAX_ACCEPTED_CANDIDATES = 6
 MAX_REJECTED_CANDIDATES = 12
 MAX_ANSWER_LENGTH = 900
@@ -122,10 +125,12 @@ class OpenAIGroundedAnswerGenerator:
         api_key: str,
         model: str,
         timeout_seconds: int,
+        reasoning_effort: OpenAIReasoningEffort | None = None,
         client: OpenAI | None = None,
     ) -> None:
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._reasoning_effort = reasoning_effort
         self._client = client or OpenAI(api_key=api_key, timeout=timeout_seconds)
 
     def answer(
@@ -134,22 +139,23 @@ class OpenAIGroundedAnswerGenerator:
         route: QueryRoute,
         candidates: tuple[HybridCandidate, ...],
     ) -> GroundedAnswerResult:
-        safe_candidates = filter_safe_candidates(candidates)
+        safe_candidates = prepare_answer_candidates(candidates)
         if not safe_candidates:
             return fallback_answer()
 
         try:
-            response = self._client.responses.parse(
-                model=self._model,
-                instructions=GROUNDING_PROMPT,
-                input=build_grounded_answer_input(route=route, candidates=safe_candidates),
-                text_format=GroundedAnswer,
-                temperature=0,
-                max_output_tokens=ANSWER_MAX_OUTPUT_TOKENS,
-                reasoning={"effort": "none"},
-                store=False,
-                timeout=self._timeout_seconds,
-            )
+            payload = {
+                "model": self._model,
+                "instructions": GROUNDING_PROMPT,
+                "input": build_grounded_answer_input(route=route, candidates=safe_candidates),
+                "text_format": GroundedAnswer,
+                "max_output_tokens": ANSWER_MAX_OUTPUT_TOKENS,
+                "store": False,
+                "timeout": self._timeout_seconds,
+            }
+            if self._reasoning_effort is not None:
+                payload["reasoning"] = {"effort": self._reasoning_effort}
+            response = self._client.responses.parse(**payload)
         except Exception:
             logger.warning("kb_answer_generation_failed", exc_info=True)
             return fallback_answer()
@@ -204,6 +210,44 @@ def filter_safe_candidates(
         candidate
         for candidate in candidates
         if candidate.content.strip() and not INSTRUCTION_LIKE_RE.search(candidate.content)
+    )
+
+
+def prepare_answer_candidates(
+    candidates: tuple[HybridCandidate, ...],
+) -> tuple[HybridCandidate, ...]:
+    """Bound evidence sent to the answer model while preserving retrieval ranking."""
+
+    safe_candidates = filter_safe_candidates(candidates)
+    return tuple(
+        trim_candidate_content(candidate)
+        for candidate in safe_candidates[:ANSWER_INPUT_MAX_CANDIDATES]
+    )
+
+
+def trim_candidate_content(candidate: HybridCandidate) -> HybridCandidate:
+    content = candidate.content.strip()
+    if len(content) <= ANSWER_CANDIDATE_MAX_CHARS:
+        return candidate
+
+    trimmed = content[:ANSWER_CANDIDATE_MAX_CHARS].rstrip()
+    return HybridCandidate(
+        candidate_id=candidate.candidate_id,
+        logical_id=candidate.logical_id,
+        section_id=candidate.section_id,
+        category=candidate.category,
+        source_category=candidate.source_category,
+        direction_id=candidate.direction_id,
+        topic_ids=candidate.topic_ids,
+        period_label=candidate.period_label,
+        heading_path=candidate.heading_path,
+        content=trimmed,
+        source=candidate.source,
+        score=candidate.score,
+        vector_score=candidate.vector_score,
+        lexical_score=candidate.lexical_score,
+        source_file=candidate.source_file,
+        markdown_path=candidate.markdown_path,
     )
 
 

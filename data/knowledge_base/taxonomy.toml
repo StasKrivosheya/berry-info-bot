@@ -90,8 +90,7 @@ aliases = [
   "анімація",
   "екскурсія",
 ]
-direction_sensitive = false
-default_direction_id = "op"
+direction_sensitive = true
 
 [topics.transfer]
 label_uk = "Трансфер"

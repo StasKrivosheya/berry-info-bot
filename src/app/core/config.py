@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,18 +12,22 @@ from app.core.constants import (
     DEFAULT_APP_NAME,
     DEFAULT_APP_PORT,
     DEFAULT_LOG_LEVEL,
-    ENV_FILE_FALLBACK,
-    ENV_FILE_LOCAL,
+    ENV_FILE,
 )
+
+OpenAIReasoningEffort = Literal["none", "low", "medium", "high", "xhigh"]
+
+DEFAULT_QUERY_ROUTER_MODEL = "gpt-5.4-nano"
+DEFAULT_QUERY_ROUTER_REASONING_EFFORT: OpenAIReasoningEffort = "none"
+DEFAULT_ANSWER_MODEL = "gpt-5.4-mini"
+DEFAULT_ANSWER_REASONING_EFFORT: OpenAIReasoningEffort = "low"
 
 
 class Settings(BaseSettings):
     """Single typed configuration object for the entire application."""
 
-    # Local Python runs are expected to use .env.local.
-    # .env remains a fallback to keep older local setups working.
     model_config = SettingsConfigDict(
-        env_file=(ENV_FILE_LOCAL, ENV_FILE_FALLBACK),
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -40,16 +45,24 @@ class Settings(BaseSettings):
         validation_alias="OPENAI_VECTOR_STORE_ID",
     )
     openai_query_router_model: str | None = Field(
-        default=None,
+        default=DEFAULT_QUERY_ROUTER_MODEL,
         validation_alias="OPENAI_QUERY_ROUTER_MODEL",
+    )
+    openai_query_router_reasoning_effort: OpenAIReasoningEffort | None = Field(
+        default=DEFAULT_QUERY_ROUTER_REASONING_EFFORT,
+        validation_alias="OPENAI_QUERY_ROUTER_REASONING_EFFORT",
     )
     openai_query_router_timeout_seconds: int = Field(
         default=10,
         validation_alias="OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS",
     )
     openai_answer_model: str | None = Field(
-        default=None,
+        default=DEFAULT_ANSWER_MODEL,
         validation_alias="OPENAI_ANSWER_MODEL",
+    )
+    openai_answer_reasoning_effort: OpenAIReasoningEffort | None = Field(
+        default=DEFAULT_ANSWER_REASONING_EFFORT,
+        validation_alias="OPENAI_ANSWER_REASONING_EFFORT",
     )
     openai_answer_timeout_seconds: int = Field(
         default=10,
@@ -72,12 +85,15 @@ class Settings(BaseSettings):
         "openai_query_router_model",
         "openai_answer_model",
         "openai_vector_store_id",
+        "openai_query_router_reasoning_effort",
+        "openai_answer_reasoning_effort",
+        mode="before",
     )
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip()
+        normalized = str(value).strip()
         return normalized or None
 
     @field_validator("openai_query_router_timeout_seconds")
