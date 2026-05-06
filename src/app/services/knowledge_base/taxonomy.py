@@ -7,6 +7,8 @@ from pathlib import Path
 
 from app.services.knowledge_base.normalizer import normalize_cell_text
 
+# ruff: noqa: RUF001
+
 DEFAULT_TAXONOMY_PATH = Path("data/knowledge_base/taxonomy.toml")
 GENERAL_TOPIC_ID = "general"
 
@@ -60,61 +62,70 @@ class KnowledgeBaseTaxonomy:
         self.directions = {direction.id: direction for direction in directions}
         self.topics = {topic.id: topic for topic in topics}
         self.sources = sources
+        self._active_directions = tuple(
+            direction for direction in self.directions.values() if direction.active
+        )
+        self._direction_key_lookup = _build_direction_key_lookup(directions)
+        self._topic_key_lookup = _build_topic_key_lookup(topics)
+        self._direction_aliases = _build_direction_aliases(directions)
+        self._topic_aliases = _build_topic_aliases(topics)
+        self._source_category_direction_lookup = {
+            _normalize_text(source_category): direction.id
+            for direction in directions
+            for source_category in direction.source_categories
+        }
 
     @property
     def active_directions(self) -> tuple[DirectionDefinition, ...]:
-        return tuple(direction for direction in self.directions.values() if direction.active)
+        return self._active_directions
 
     def normalize_direction_id(self, value: str | None) -> str | None:
         normalized = _normalize_key(value)
         if not normalized:
             return None
-        if normalized in self.directions:
-            return normalized
-        for direction in self.directions.values():
-            if normalized in {_normalize_key(alias) for alias in direction.aliases}:
-                return direction.id
-        return None
+        return self._direction_key_lookup.get(normalized)
+
+    def normalize_direction_ids(self, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized_values: list[str] = []
+        for value in values:
+            direction_id = self.normalize_direction_id(value)
+            if direction_id is not None and direction_id not in normalized_values:
+                normalized_values.append(direction_id)
+        return tuple(normalized_values)
 
     def normalize_topic_id(self, value: str | None) -> str | None:
         normalized = _normalize_key(value)
         if not normalized:
             return None
-        if normalized in self.topics:
-            return normalized
-        for topic in self.topics.values():
-            if normalized in {_normalize_key(alias) for alias in topic.aliases}:
-                return topic.id
-        return None
+        return self._topic_key_lookup.get(normalized)
 
     def infer_direction_id_from_text(self, text: str) -> str | None:
+        direction_ids = self.infer_direction_ids_from_text(text)
+        return direction_ids[0] if direction_ids else None
+
+    def infer_direction_ids_from_text(self, text: str) -> tuple[str, ...]:
         haystack = _normalize_text(text)
         if not haystack:
-            return None
-        matches: list[tuple[int, str]] = []
-        for direction in self.directions.values():
-            aliases = (direction.id, direction.short_label, direction.label_uk, *direction.aliases)
-            for alias in aliases:
-                normalized_alias = _normalize_text(alias)
-                if _contains_alias(haystack, normalized_alias):
-                    matches.append((len(normalized_alias), direction.id))
-                    break
-        if not matches:
-            return None
-        matches.sort(reverse=True)
-        return matches[0][1]
+            return ()
+        matched_ids: list[str] = []
+        for direction_id, aliases in self._direction_aliases:
+            if any(_contains_alias(haystack, alias) for alias in aliases):
+                matched_ids.append(direction_id)
+        if matched_ids:
+            return tuple(matched_ids)
+        if _requests_all_active_directions(haystack):
+            return tuple(direction.id for direction in self.active_directions)
+        return ()
 
     def infer_topic_ids_from_text(self, text: str) -> tuple[str, ...]:
         haystack = _normalize_text(text)
         if not haystack:
             return ()
         matches: list[tuple[int, str]] = []
-        for topic in self.topics.values():
-            aliases = (topic.id, topic.label_uk, *topic.aliases)
+        for topic_id, aliases in self._topic_aliases:
             for alias in aliases:
-                normalized_alias = _normalize_text(alias)
-                if _contains_alias(haystack, normalized_alias):
-                    matches.append((len(normalized_alias), topic.id))
+                if _contains_alias(haystack, alias):
+                    matches.append((len(alias), topic_id))
                     break
         matches.sort(reverse=True)
         ordered_ids: list[str] = []
@@ -167,12 +178,21 @@ class KnowledgeBaseTaxonomy:
         self,
         *,
         topic_id: str | None,
-        direction_id: str | None,
+        direction_ids: tuple[str, ...] = (),
     ) -> bool:
-        if direction_id is not None or topic_id is None:
+        if direction_ids or topic_id is None:
             return False
         topic = self.topics.get(topic_id)
         return bool(topic and topic.direction_sensitive and len(self.active_directions) > 1)
+
+    def should_clarify_topic(self, *, topic_id: str | None) -> bool:
+        return topic_id is None or topic_id == GENERAL_TOPIC_ID
+
+    def build_topic_clarification_text(self) -> str:
+        topic_labels = ", ".join(
+            topic.label_uk for topic in self.topics.values() if topic.id != GENERAL_TOPIC_ID
+        )
+        return f"Уточніть, будь ласка, що саме вас цікавить: {topic_labels}."
 
     def build_direction_clarification_text(self, topic_id: str | None) -> str:
         topic = self.topics.get(topic_id or "")
@@ -216,12 +236,7 @@ class KnowledgeBaseTaxonomy:
         )
 
     def _direction_for_source_category(self, source_category: str) -> str | None:
-        source_category_key = _normalize_text(source_category)
-        for direction in self.directions.values():
-            for configured_category in direction.source_categories:
-                if _normalize_text(configured_category) == source_category_key:
-                    return direction.id
-        return None
+        return self._source_category_direction_lookup.get(_normalize_text(source_category))
 
 
 def load_taxonomy(path: Path = DEFAULT_TAXONOMY_PATH) -> KnowledgeBaseTaxonomy:
@@ -333,6 +348,62 @@ def _list(raw_value: object) -> list[object]:
     return []
 
 
+def _build_direction_key_lookup(
+    directions: tuple[DirectionDefinition, ...],
+) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for direction in directions:
+        lookup[_normalize_key(direction.id)] = direction.id
+    for direction in directions:
+        for alias in (direction.short_label, direction.label_uk, *direction.aliases):
+            lookup.setdefault(_normalize_key(alias), direction.id)
+    return lookup
+
+
+def _build_topic_key_lookup(
+    topics: tuple[TopicDefinition, ...],
+) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for topic in topics:
+        lookup[_normalize_key(topic.id)] = topic.id
+    for topic in topics:
+        for alias in (topic.label_uk, *topic.aliases):
+            lookup.setdefault(_normalize_key(alias), topic.id)
+    return lookup
+
+
+def _build_direction_aliases(
+    directions: tuple[DirectionDefinition, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple(
+        (
+            direction.id,
+            _normalize_aliases(
+                (direction.id, direction.short_label, direction.label_uk, *direction.aliases),
+            ),
+        )
+        for direction in directions
+    )
+
+
+def _build_topic_aliases(
+    topics: tuple[TopicDefinition, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple(
+        (topic.id, _normalize_aliases((topic.id, topic.label_uk, *topic.aliases)))
+        for topic in topics
+    )
+
+
+def _normalize_aliases(values: tuple[str, ...]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for value in values:
+        normalized = _normalize_text(value)
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    return tuple(aliases)
+
+
 def _normalize_key(value: str | None) -> str:
     return normalize_cell_text(str(value or "")).casefold().replace("-", "_").replace(" ", "_")
 
@@ -347,3 +418,8 @@ def _contains_alias(haystack: str, alias: str) -> bool:
     if len(alias) <= 2:
         return alias in haystack.split()
     return alias in haystack
+
+
+def _requests_all_active_directions(haystack: str) -> bool:
+    tokens = set(haystack.split())
+    return bool(tokens & {"всі", "усі", "усе", "обидва", "обидві", "both", "all"})

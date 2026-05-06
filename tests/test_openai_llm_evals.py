@@ -46,14 +46,15 @@ def test_real_router_eval_cases() -> None:
     )
     store = QueryContextStore(ttl_seconds=900, monotonic=lambda: 1.0)
     cases = (
-        ("Вітаю!", "greeting", False, None, None),
-        ("Скільки коштують квитки?", "kb_query", False, "tickets", None),
-        ("Які є види програм ОП?", "kb_query", True, "programs", "op"),
-        ("Скільки коштують квитки на СВ?", "kb_query", True, "tickets", "sv"),
-        ("Чи можна замовити вертоліт?", "unsupported", False, None, None),
+        ("Вітаю!", "greeting", False, None, []),
+        ("Скільки коштують квитки?", "kb_query", False, "tickets", []),
+        ("Які є види програм ОП?", "kb_query", True, "programs", ["op"]),
+        ("Скільки коштують квитки на СВ?", "kb_query", True, "tickets", ["sv"]),
+        ("Чи можна замовити вертоліт?", "unsupported", False, None, []),
     )
 
-    for index, (message, route_name, should_search, topic_hint, direction_hint) in enumerate(cases):
+    for index, case in enumerate(cases):
+        message, route_name, should_search, topic_hint, direction_hints = case
         result = route_free_text_message(
             router=router,
             context_store=store,
@@ -65,7 +66,7 @@ def test_real_router_eval_cases() -> None:
         assert result.route.route == route_name, message
         assert result.should_search is should_search, message
         assert result.route.topic_hint == topic_hint, message
-        assert result.route.direction_hint == direction_hint, message
+        assert result.route.direction_hints == direction_hints, message
 
 
 def test_real_answer_eval_cases() -> None:
@@ -125,7 +126,7 @@ def _route(message: str):
         lexical_keywords=["трансфер", "Дніпро"],
         lexical_phrases=["трансфер з Дніпра"],
         topic_hint="transfer",
-        direction_hint="op",
+        direction_hints=["op"],
         confidence=0.9,
     )
 

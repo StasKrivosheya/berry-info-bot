@@ -3,58 +3,58 @@ cases:
     query: "Які є види програм?"
     route: "kb_query"
     topic_hint: "programs"
-    direction_hint: ""
+    direction_hints: ""
     expected_should_search: false
     expected_topic_hint: "programs"
-    expected_direction_hint: ""
+    expected_direction_hints: ""
     expected_response: "clarify"
 
   - id: uk_op_programs_searches
     query: "РЇРєС– С” РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ?"
     route: "kb_query"
     topic_hint: "programs"
-    direction_hint: "op"
+    direction_hints: "op"
     expected_should_search: true
     expected_topic_hint: "programs"
-    expected_direction_hint: "op"
+    expected_direction_hints: "op"
     expected_response: "search"
 
   - id: uk_ticket_price_requires_direction
     query: "Скільки коштують квитки?"
     route: "kb_query"
     topic_hint: "tickets"
-    direction_hint: ""
+    direction_hints: ""
     expected_should_search: false
     expected_topic_hint: "tickets"
-    expected_direction_hint: ""
+    expected_direction_hints: ""
     expected_response: "clarify"
 
   - id: uk_sv_ticket_price_searches
     query: "Скільки коштують квитки на СВ?"
     route: "kb_query"
     topic_hint: "tickets"
-    direction_hint: "sv"
+    direction_hints: "sv"
     expected_should_search: true
     expected_topic_hint: "tickets"
-    expected_direction_hint: "sv"
+    expected_direction_hints: "sv"
     expected_response: "search"
 
   - id: uk_schedule_requires_direction
     query: "В які дні працює парк?"
     route: "kb_query"
     topic_hint: "schedule"
-    direction_hint: ""
+    direction_hints: ""
     expected_should_search: false
     expected_topic_hint: "schedule"
-    expected_direction_hint: ""
+    expected_direction_hints: ""
     expected_response: "clarify"
 
   - id: uk_greeting_no_search
     query: "Вітаю!"
     route: "greeting"
     topic_hint: ""
-    direction_hint: ""
+    direction_hints: ""
     expected_should_search: false
     expected_topic_hint: ""
-    expected_direction_hint: ""
+    expected_direction_hints: ""
     expected_response: "service"

@@ -65,7 +65,7 @@ def _route(
     lexical_phrases: list[str] | None = None,
     use_context: bool = False,
     topic_hint: str | None = None,
-    direction_hint: str | None = None,
+    direction_hints: list[str] | None = None,
     confidence: float = 0.9,
 ) -> QueryRoute:
     return QueryRoute(
@@ -77,7 +77,7 @@ def _route(
         lexical_phrases=lexical_phrases or [],
         use_context=use_context,
         topic_hint=topic_hint,
-        direction_hint=direction_hint,
+        direction_hints=direction_hints or [],
         confidence=confidence,
     )
 
@@ -132,7 +132,7 @@ def test_ukrainian_program_question_without_direction_clarifies() -> None:
     assert result.route.canonical_question_uk == "Які програми доступні в Berry Land?"
     assert result.route.vector_query_uk == "організовані програми Berry Land"
     assert result.route.topic_hint == "programs"
-    assert result.route.direction_hint is None
+    assert result.route.direction_hints == []
 
 
 def test_direction_sensitive_topic_without_direction_asks_for_clarification() -> None:
@@ -155,7 +155,7 @@ def test_direction_sensitive_topic_without_direction_asks_for_clarification() ->
 
     assert result.route is not None
     assert result.route.topic_hint == "tickets"
-    assert result.route.direction_hint is None
+    assert result.route.direction_hints == []
     assert result.should_search is False
     assert "ОП" in result.response_text
     assert "СВ" in result.response_text
@@ -170,7 +170,7 @@ def test_controlled_direction_allows_search_for_sensitive_topic() -> None:
         lexical_keywords=["квитки", "вартість", "сімейний відпочинок"],
         lexical_phrases=["вартість квитків"],
         topic_hint="tickets",
-        direction_hint="sv",
+        direction_hints=["sv"],
     )
 
     result = route_free_text_message(
@@ -180,8 +180,82 @@ def test_controlled_direction_allows_search_for_sensitive_topic() -> None:
         message="Скільки коштують квитки на СВ?",
     )
 
-    assert result.route == route
+    assert result.route is not None
+    assert result.route.direction_hints == ["sv"]
     assert result.should_search is True
+
+
+def test_pending_direction_clarification_accepts_short_direction_reply() -> None:
+    store = _store()
+    context_key = _key()
+    first_route = _route(
+        "kb_query",
+        original_message="Скільки коштують квитки?",
+        canonical_question_uk="Яка вартість квитків у Berry Land?",
+        vector_query_uk="вартість квитків Berry Land",
+        lexical_keywords=["квитки", "вартість"],
+        lexical_phrases=["вартість квитків"],
+        topic_hint="tickets",
+    )
+    router = StaticRouter(first_route)
+
+    first = route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="Скільки коштують квитки?",
+    )
+    second = route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="св",
+    )
+
+    assert first.should_search is False
+    assert first.clarification_kind == "direction"
+    assert second.route is not None
+    assert second.should_search is True
+    assert second.used_context is True
+    assert second.route.route == "follow_up"
+    assert second.route.topic_hint == "tickets"
+    assert second.route.direction_hints == ["sv"]
+    assert len(router.calls) == 1
+
+
+def test_pending_direction_clarification_accepts_multiple_directions() -> None:
+    store = _store()
+    context_key = _key()
+    first_route = _route(
+        "kb_query",
+        original_message="Скільки коштують квитки?",
+        canonical_question_uk="Яка вартість квитків у Berry Land?",
+        vector_query_uk="вартість квитків Berry Land",
+        lexical_keywords=["квитки", "вартість"],
+        lexical_phrases=["вартість квитків"],
+        topic_hint="tickets",
+    )
+    router = StaticRouter(first_route)
+
+    route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="Скільки коштують квитки?",
+    )
+    second = route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="і св і оп",
+    )
+
+    assert second.route is not None
+    assert second.should_search is True
+    assert second.route.direction_hints == ["op", "sv"]
+    assert "ОП" in second.route.vector_query_uk
+    assert "СВ" in second.route.vector_query_uk
+    assert len(router.calls) == 1
 
 
 def test_program_topic_without_direction_asks_for_clarification() -> None:
@@ -203,7 +277,7 @@ def test_program_topic_without_direction_asks_for_clarification() -> None:
     )
 
     assert result.route is not None
-    assert result.route.direction_hint is None
+    assert result.route.direction_hints == []
     assert result.should_search is False
 
 
@@ -216,7 +290,7 @@ def test_program_topic_with_direction_allows_search() -> None:
         lexical_keywords=["РїСЂРѕРіСЂР°РјРё", "РћРџ"],
         lexical_phrases=["РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ"],
         topic_hint="programs",
-        direction_hint="op",
+        direction_hints=["op"],
     )
 
     result = route_free_text_message(
@@ -227,8 +301,65 @@ def test_program_topic_with_direction_allows_search() -> None:
     )
 
     assert result.route is not None
-    assert result.route.direction_hint == "op"
+    assert result.route.direction_hints == ["op"]
     assert result.should_search is True
+
+
+def test_kb_query_without_topic_asks_topic_clarification() -> None:
+    route = _route(
+        "kb_query",
+        original_message="Хочу уточнити інформацію",
+        canonical_question_uk="Яка інформація про Berry Land цікавить користувача?",
+        vector_query_uk="інформація Berry Land",
+        lexical_keywords=["інформація"],
+        lexical_phrases=["інформація Berry Land"],
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(route),
+        context_store=_store(),
+        context_key=_key(),
+        message="Хочу уточнити інформацію",
+    )
+
+    assert result.route is not None
+    assert result.should_search is False
+    assert result.clarification_kind == "topic"
+    assert "що саме вас цікавить" in result.response_text
+
+
+def test_pending_topic_clarification_accepts_topic_then_asks_direction_if_needed() -> None:
+    store = _store()
+    context_key = _key()
+    first_route = _route(
+        "kb_query",
+        original_message="Хочу уточнити інформацію",
+        canonical_question_uk="Яка інформація про Berry Land цікавить користувача?",
+        vector_query_uk="інформація Berry Land",
+        lexical_keywords=["інформація"],
+        lexical_phrases=["інформація Berry Land"],
+    )
+    router = StaticRouter(first_route)
+
+    first = route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="Хочу уточнити інформацію",
+    )
+    second = route_free_text_message(
+        router=router,
+        context_store=store,
+        context_key=context_key,
+        message="квитки",
+    )
+
+    assert first.clarification_kind == "topic"
+    assert second.route is not None
+    assert second.route.topic_hint == "tickets"
+    assert second.should_search is False
+    assert second.clarification_kind == "direction"
+    assert len(router.calls) == 1
 
 
 def test_russian_and_english_questions_return_ukrainian_canonical_queries() -> None:
@@ -288,7 +419,7 @@ def test_short_follow_up_uses_previous_context_when_available() -> None:
         lexical_keywords=["програми"],
         lexical_phrases=["організовані програми"],
     )
-    first_route = first_route.model_copy(update={"direction_hint": "op"})
+    first_route = first_route.model_copy(update={"direction_hints": ["op"]})
     follow_up_route = _route(
         "follow_up",
         original_message="А скільки коштує?",
@@ -319,7 +450,7 @@ def test_short_follow_up_uses_previous_context_when_available() -> None:
     assert second.should_search is True
     assert second.used_context is True
     assert second.route.topic_hint == "tickets"
-    assert second.route.direction_hint == "op"
+    assert second.route.direction_hints == ["op"]
     assert router.calls[0]["context"] is None
     assert router.calls[1]["context"] is not None
 
@@ -336,6 +467,42 @@ def test_follow_up_without_context_asks_for_clarification() -> None:
     assert result.route.route == "follow_up"
     assert result.response_text == FOLLOW_UP_CLARIFICATION_TEXT
     assert result.should_search is False
+
+
+def test_short_contextual_follow_up_recovers_when_llm_fails() -> None:
+    store = _store()
+    context_key = _key()
+    first_route = _route(
+        "kb_query",
+        original_message="можно остаться на ночевку?",
+        canonical_question_uk="Чи можна залишитися на ночівлю в Berry Land?",
+        vector_query_uk="ночівля Berry Land",
+        lexical_keywords=["ночівля"],
+        lexical_phrases=["залишитися на ночівлю"],
+        direction_hints=["camping"],
+    )
+    first = route_free_text_message(
+        router=StaticRouter(first_route),
+        context_store=store,
+        context_key=context_key,
+        message="можно остаться на ночевку?",
+    )
+
+    result = route_free_text_message(
+        router=StaticRouter(error=RuntimeError("llm failed")),
+        context_store=store,
+        context_key=context_key,
+        message="в які дні?",
+    )
+
+    assert first.should_search is True
+    assert result.route is not None
+    assert result.should_search is True
+    assert result.used_context is True
+    assert result.route.route == "follow_up"
+    assert result.route.topic_hint == "schedule"
+    assert result.route.direction_hints == ["camping"]
+    assert "в які дні" in result.route.vector_query_uk
 
 
 def test_malformed_llm_output_fails_safely() -> None:

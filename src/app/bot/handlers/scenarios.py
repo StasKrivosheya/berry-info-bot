@@ -321,7 +321,7 @@ def _answer_searchable_route(route) -> str:
         elapsed_ms = round((time.perf_counter() - started_at) * 1000)
         logger.info(
             (
-                "%s route=%s topic_hint=%s direction_hint=%s canonical_question=%r "
+                "%s route=%s topic_hint=%s direction_hints=%s canonical_question=%r "
                 "vector_candidate_count=%s "
                 "lexical_candidate_count=%s accepted_candidate_ids=%s answer_state=%s "
                 "elapsed_ms=%s"
@@ -329,7 +329,7 @@ def _answer_searchable_route(route) -> str:
             LOG_EVENT_KB_ANSWERED,
             route.route,
             route.topic_hint,
-            route.direction_hint,
+            ",".join(route.direction_hints),
             route.canonical_question_uk,
             vector_count,
             lexical_count,

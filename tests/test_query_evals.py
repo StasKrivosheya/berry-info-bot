@@ -35,7 +35,9 @@ def test_eval_cases_exercise_final_routing_contract() -> None:
         assert result.route is not None, case["id"]
         assert result.should_search is case["expected_should_search"], case["id"]
         assert (result.route.topic_hint or "") == case["expected_topic_hint"], case["id"]
-        assert (result.route.direction_hint or "") == case["expected_direction_hint"], case["id"]
+        assert result.route.direction_hints == _csv(
+            case.get("expected_direction_hints"),
+        ), case["id"]
 
         expected_response = case["expected_response"]
         if expected_response == "clarify":
@@ -56,14 +58,14 @@ def _route_from_case(case: dict[str, object]) -> QueryRoute:
             lexical_keywords=[query.split()[0]],
             lexical_phrases=[query],
             topic_hint=_optional(case.get("topic_hint")),
-            direction_hint=_optional(case.get("direction_hint")),
+            direction_hints=_csv(case.get("direction_hints")),
             confidence=0.9,
         )
     return QueryRoute(
         route=route,
         original_message=query,
         topic_hint=_optional(case.get("topic_hint")),
-        direction_hint=_optional(case.get("direction_hint")),
+        direction_hints=_csv(case.get("direction_hints")),
         confidence=0.9,
     )
 
@@ -103,3 +105,10 @@ def _scalar(value: str) -> object:
 def _optional(value: object) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _csv(value: object) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]

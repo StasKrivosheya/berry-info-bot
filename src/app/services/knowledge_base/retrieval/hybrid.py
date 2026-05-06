@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -290,12 +290,12 @@ def _apply_route_boost(
         return candidate
 
     taxonomy = get_default_taxonomy()
-    direction_id = taxonomy.normalize_direction_id(route.direction_hint)
+    direction_ids = taxonomy.normalize_direction_ids(tuple(route.direction_hints))
     topic_id = taxonomy.normalize_topic_id(route.topic_hint)
     boost = 0.0
-    if direction_id and candidate.direction_id == direction_id:
+    if direction_ids and candidate.direction_id in direction_ids:
         boost += 0.75
-    elif direction_id and candidate.direction_id and candidate.direction_id != direction_id:
+    elif direction_ids and candidate.direction_id and candidate.direction_id not in direction_ids:
         boost -= 0.25
 
     if topic_id and topic_id in candidate.topic_ids:
@@ -303,24 +303,7 @@ def _apply_route_boost(
 
     if boost == 0:
         return candidate
-    return HybridCandidate(
-        candidate_id=candidate.candidate_id,
-        logical_id=candidate.logical_id,
-        section_id=candidate.section_id,
-        category=candidate.category,
-        source_category=candidate.source_category,
-        direction_id=candidate.direction_id,
-        topic_ids=candidate.topic_ids,
-        period_label=candidate.period_label,
-        heading_path=candidate.heading_path,
-        content=candidate.content,
-        source=candidate.source,
-        score=max(0.0, candidate.score + boost),
-        vector_score=candidate.vector_score,
-        lexical_score=candidate.lexical_score,
-        source_file=candidate.source_file,
-        markdown_path=candidate.markdown_path,
-    )
+    return replace(candidate, score=max(0.0, candidate.score + boost))
 
 
 def _merge_topic_ids(

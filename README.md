@@ -146,9 +146,9 @@ Future inactive directions are already named in taxonomy: `camping`, `birthdays`
 1. Commands, callbacks, and exact menu labels are handled without LLM.
 2. Normal free text goes to one structured routing/canonicalization call.
 3. Router returns route, Ukrainian canonical question, vector query, lexical terms, `topic_hint`,
-   `direction_hint`, and optional `target_date`.
+   `direction_hints`, and optional `target_date`.
 4. Hybrid search runs broad vector and local lexical retrieval.
-5. `topic_hint` and `direction_hint` are ranking boosts, not hard filters.
+5. `topic_hint` and `direction_hints` are ranking boosts, not hard filters.
 6. Candidate IDs are deduplicated and bounded.
 7. Answer model receives candidates as untrusted data.
 8. If accepted evidence is empty or insufficient, answer is exactly:

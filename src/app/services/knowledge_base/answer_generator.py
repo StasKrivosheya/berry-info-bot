@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from openai import OpenAI
@@ -195,7 +195,7 @@ def build_grounded_answer_input(
                 f"{route.canonical_question_uk or route.original_message}"
             ),
             f"Question topic_hint: {route.topic_hint or '(none)'}",
-            f"Question direction_hint: {route.direction_hint or '(none)'}",
+            f"Question direction_hints: {', '.join(route.direction_hints) or '(none)'}",
             f"Question target_date: {route.target_date or '(none)'}",
             "Evidence candidates:",
             *candidate_blocks,
@@ -231,24 +231,7 @@ def trim_candidate_content(candidate: HybridCandidate) -> HybridCandidate:
         return candidate
 
     trimmed = content[:ANSWER_CANDIDATE_MAX_CHARS].rstrip()
-    return HybridCandidate(
-        candidate_id=candidate.candidate_id,
-        logical_id=candidate.logical_id,
-        section_id=candidate.section_id,
-        category=candidate.category,
-        source_category=candidate.source_category,
-        direction_id=candidate.direction_id,
-        topic_ids=candidate.topic_ids,
-        period_label=candidate.period_label,
-        heading_path=candidate.heading_path,
-        content=trimmed,
-        source=candidate.source,
-        score=candidate.score,
-        vector_score=candidate.vector_score,
-        lexical_score=candidate.lexical_score,
-        source_file=candidate.source_file,
-        markdown_path=candidate.markdown_path,
-    )
+    return replace(candidate, content=trimmed)
 
 
 def enforce_grounded_answer(
