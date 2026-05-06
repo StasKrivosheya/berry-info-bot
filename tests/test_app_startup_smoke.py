@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -35,21 +36,28 @@ class FakeDispatcher:
         await asyncio.Event().wait()
 
 
-def test_create_app_lifespan_starts_with_mocked_runtime_dependencies(monkeypatch) -> None:
+def test_create_app_lifespan_starts_with_mocked_runtime_dependencies(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     fake_bot = FakeBot()
     fake_dispatcher = FakeDispatcher()
+    manifest_path = tmp_path / "manifest.json"
+    lexical_index_path = tmp_path / "kb.sqlite3"
+    manifest_path.write_text('{"entries": []}', encoding="utf-8")
+    lexical_index_path.write_text("", encoding="utf-8")
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:TEST_TOKEN")
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("DEBUG_COMMANDS_MODE", "disabled")
-    monkeypatch.setenv("ADMIN_USER_IDS", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_QUERY_ROUTER_MODEL", "test-router")
+    monkeypatch.setenv("OPENAI_ANSWER_MODEL", "test-answer")
+    monkeypatch.setenv("OPENAI_VECTOR_STORE_ID", "vs_test")
+    monkeypatch.setenv("KB_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setenv("KB_LEXICAL_INDEX_PATH", str(lexical_index_path))
     get_settings.cache_clear()
     monkeypatch.setattr(lifespan, "create_bot", lambda token: fake_bot)
-    monkeypatch.setattr(
-        lifespan,
-        "create_dispatcher",
-        lambda admin_user_ids, *, debug_commands_mode: fake_dispatcher,
-    )
+    monkeypatch.setattr(lifespan, "create_dispatcher", lambda: fake_dispatcher)
 
     try:
         app = create_app()

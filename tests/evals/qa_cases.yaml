@@ -1,40 +1,50 @@
 cases:
-  - id: uk_programs_real_utf8
-    language: uk
-    query: "Які у вас є програми?"
-    expected:
-      intent: enumeration
-      scope: programs
-      strategy: enumeration_catalog
-      needs_retrieval: false
-      note: "Current deterministic rules recognize this Ukrainian program-list query."
+  - id: uk_programs_searches_op
+    query: "Які є види програм?"
+    route: "kb_query"
+    topic_hint: "programs"
+    direction_hint: ""
+    expected_should_search: true
+    expected_topic_hint: "programs"
+    expected_direction_hint: "op"
+    expected_response: "search"
 
-  - id: ru_programs_real_utf8
-    language: ru
-    query: "Какие программы есть?"
-    expected:
-      intent: unknown
-      scope: programs
-      strategy: enumeration_catalog
-      needs_retrieval: false
-      note: "Russian wording only partially maps today: program scope is detected, but intent remains unknown."
+  - id: uk_ticket_price_requires_direction
+    query: "Скільки коштують квитки?"
+    route: "kb_query"
+    topic_hint: "tickets"
+    direction_hint: ""
+    expected_should_search: false
+    expected_topic_hint: "tickets"
+    expected_direction_hint: ""
+    expected_response: "clarify"
 
-  - id: en_programs_real_utf8
-    language: en
-    query: "What programs do you offer?"
-    expected:
-      intent: unknown
-      scope: general
-      strategy: safe_fallback
-      needs_retrieval: true
-      note: "English canonicalization is not implemented yet."
+  - id: uk_sv_ticket_price_searches
+    query: "Скільки коштують квитки на СВ?"
+    route: "kb_query"
+    topic_hint: "tickets"
+    direction_hint: "sv"
+    expected_should_search: true
+    expected_topic_hint: "tickets"
+    expected_direction_hint: "sv"
+    expected_response: "search"
 
-  - id: uk_transfer_price_real_utf8
-    language: uk
-    query: "Скільки коштує трансфер?"
-    expected:
-      intent: detail
-      scope: services
-      strategy: detail_retrieval
-      needs_retrieval: true
-      note: "Current baseline recognizes this as detail but scopes it to services instead of transfer."
+  - id: uk_schedule_requires_direction
+    query: "В які дні працює парк?"
+    route: "kb_query"
+    topic_hint: "schedule"
+    direction_hint: ""
+    expected_should_search: false
+    expected_topic_hint: "schedule"
+    expected_direction_hint: ""
+    expected_response: "clarify"
+
+  - id: uk_greeting_no_search
+    query: "Вітаю!"
+    route: "greeting"
+    topic_hint: ""
+    direction_hint: ""
+    expected_should_search: false
+    expected_topic_hint: ""
+    expected_direction_hint: ""
+    expected_response: "service"

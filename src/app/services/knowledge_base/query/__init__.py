@@ -1,3 +1,1 @@
-from app.services.knowledge_base.query.pipeline import KnowledgeBaseQueryPipeline
-
-__all__ = ["KnowledgeBaseQueryPipeline"]
+"""Minimal KB markdown structure helpers retained for retrieval."""

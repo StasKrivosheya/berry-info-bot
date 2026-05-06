@@ -1,17 +1,15 @@
 ﻿from __future__ import annotations
 
 import logging
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
 
 from app.services.knowledge_base.manifest.reader import load_manifest_sync_items
 from app.services.knowledge_base.normalizer import normalize_cell_text
-from app.services.knowledge_base.query.dto import VectorHit
-from app.services.knowledge_base.query.rules import SCOPE_RULES
 from app.services.knowledge_base.query.text import token_overlap_score, tokenize_text
 from app.services.knowledge_base.query.types import (
-    QueryScopeName,
     SearchHitDebugContext,
     StructuredDocument,
     StructuredSection,
@@ -25,11 +23,18 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 LOG_EVENT_STRUCTURE_LOADED = "kb_structure_loaded"
 
 
+def _default_manifest_path() -> Path:
+    configured = os.getenv("KB_MANIFEST_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    return DEFAULT_MANIFEST_PATH
+
+
 class KnowledgeBaseStructureReader:
     """Read processed KB structure from manifest + markdown files."""
 
     def __init__(self, manifest_path: Path | None = None) -> None:
-        self._manifest_path = (manifest_path or DEFAULT_MANIFEST_PATH).resolve()
+        self._manifest_path = (manifest_path or _default_manifest_path()).resolve()
 
     @property
     def manifest_path(self) -> Path:
@@ -41,56 +46,12 @@ class KnowledgeBaseStructureReader:
             _manifest_cache_key(self._manifest_path),
         )
 
-    def documents_for_scopes(
-        self,
-        scopes: tuple[QueryScopeName, ...],
-    ) -> tuple[StructuredDocument, ...]:
-        documents = self.load_documents()
-        if not documents:
-            return ()
-        filtered = [
-            document
-            for document in documents
-            if "general" in scopes or any(scope in document.scopes for scope in scopes)
-        ]
-        return tuple(filtered)
-
     def resolve_hit_context(self, hit: SearchHit) -> SearchHitDebugContext | None:
         documents = self.load_documents()
         if not documents:
             return None
 
         logical_id = str(hit.attributes.get("logical_id", "")).strip() or Path(hit.filename).stem
-        documents_by_id = {document.logical_id: document for document in documents}
-        document = documents_by_id.get(logical_id)
-        if document is None:
-            return None
-
-        section = _match_section(hit.text, document.sections)
-        if section is None:
-            return SearchHitDebugContext(
-                logical_id=document.logical_id,
-                source_file=document.source_file or None,
-                document_title=document.title or None,
-                heading_path=(document.title,) if document.title else (),
-            )
-
-        return SearchHitDebugContext(
-            logical_id=document.logical_id,
-            source_file=document.source_file or None,
-            document_title=document.title or None,
-            heading_path=section.heading_path,
-        )
-
-    def resolve_vector_hit_context(self, hit: VectorHit) -> SearchHitDebugContext | None:
-        documents = self.load_documents()
-        if not documents:
-            return None
-
-        logical_id = str(hit.attributes.get("logical_id", "")).strip()
-        if not logical_id:
-            section_id = hit.section_id.split(":", maxsplit=1)[0]
-            logical_id = section_id.strip()
         documents_by_id = {document.logical_id: document for document in documents}
         document = documents_by_id.get(logical_id)
         if document is None:
@@ -130,11 +91,6 @@ def _load_documents_cached(
             continue
         markdown = markdown_path.read_text(encoding="utf-8")
         title, sections = _parse_outline(markdown)
-        scopes = _infer_document_scopes(
-            title=title,
-            category=item.category,
-            sections=tuple(sections),
-        )
         documents.append(
             StructuredDocument(
                 logical_id=item.logical_id,
@@ -142,7 +98,7 @@ def _load_documents_cached(
                 category=item.category,
                 source_file=item.source_file,
                 markdown_path=markdown_path,
-                scopes=scopes,
+                scopes=("general",),
                 sections=tuple(sections),
             )
         )
@@ -237,41 +193,6 @@ def _parse_outline(markdown: str) -> tuple[str, list[StructuredSection]]:
         )
 
     return title, sections
-
-
-def _infer_document_scopes(
-    *,
-    title: str,
-    category: str,
-    sections: tuple[StructuredSection, ...],
-) -> tuple[QueryScopeName, ...]:
-    haystack = normalize_cell_text(
-        "\n".join(
-            [
-                title,
-                category,
-                *(section.heading for section in sections[:12]),
-            ]
-        )
-    ).casefold()
-    matched_scopes: list[QueryScopeName] = []
-    for rule in SCOPE_RULES:
-        if any(fragment in haystack for fragment in rule.contains_any):
-            if rule.scope not in matched_scopes:
-                matched_scopes.append(rule.scope)
-
-    if not matched_scopes:
-        return ("general",)
-
-    ordered = sorted(
-        matched_scopes,
-        key=lambda scope: (
-            max(rule.priority for rule in SCOPE_RULES if rule.scope == scope),
-            scope,
-        ),
-        reverse=True,
-    )
-    return tuple(ordered)
 
 
 def _match_section(

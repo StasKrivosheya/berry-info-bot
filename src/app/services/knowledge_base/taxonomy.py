@@ -97,7 +97,7 @@ class KnowledgeBaseTaxonomy:
             aliases = (direction.id, direction.short_label, direction.label_uk, *direction.aliases)
             for alias in aliases:
                 normalized_alias = _normalize_text(alias)
-                if normalized_alias and normalized_alias in haystack:
+                if _contains_alias(haystack, normalized_alias):
                     matches.append((len(normalized_alias), direction.id))
                     break
         if not matches:
@@ -114,7 +114,7 @@ class KnowledgeBaseTaxonomy:
             aliases = (topic.id, topic.label_uk, *topic.aliases)
             for alias in aliases:
                 normalized_alias = _normalize_text(alias)
-                if normalized_alias and normalized_alias in haystack:
+                if _contains_alias(haystack, normalized_alias):
                     matches.append((len(normalized_alias), topic.id))
                     break
         matches.sort(reverse=True)
@@ -341,3 +341,11 @@ def _normalize_key(value: str | None) -> str:
 
 def _normalize_text(value: str) -> str:
     return normalize_cell_text(value).casefold()
+
+
+def _contains_alias(haystack: str, alias: str) -> bool:
+    if not alias:
+        return False
+    if len(alias) <= 2:
+        return alias in haystack.split()
+    return alias in haystack

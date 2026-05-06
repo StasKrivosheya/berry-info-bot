@@ -12,8 +12,8 @@ def _router_names(router: Router) -> set[str]:
     return names
 
 
-def test_production_dispatcher_does_not_register_debug_router_by_default() -> None:
-    dispatcher = create_dispatcher((), debug_commands_mode="disabled")
+def test_production_dispatcher_registers_only_production_router() -> None:
+    dispatcher = create_dispatcher()
 
     registered_names: set[str] = set()
     for router in dispatcher.sub_routers:

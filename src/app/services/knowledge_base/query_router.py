@@ -31,7 +31,7 @@ SERVICE_FALLBACK_TEXT = (
     "Я віртуальний менеджер Berry Land. Скористайтеся кнопками меню або напишіть "
     "запитання про парк."
 )
-FOLLOW_UP_CLARIFICATION_TEXT = "Уточніть, будь ласка, про що саме ви питаєте."
+FOLLOW_UP_CLARIFICATION_TEXT = "Уточніть, будь ласка, про який напрям ви питаєте?"
 
 QUERY_ROUTER_BASE_PROMPT = """
 You route Berry Land Telegram messages. Return only the QueryRoute schema.
