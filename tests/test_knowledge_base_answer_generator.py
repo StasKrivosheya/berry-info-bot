@@ -11,6 +11,7 @@ from app.services.knowledge_base.answer_generator import (
     GROUNDING_PROMPT,
     GroundedAnswer,
     OpenAIGroundedAnswerGenerator,
+    normalize_answer_text_layout,
     prepare_answer_candidates,
 )
 from app.services.knowledge_base.query_router import QueryRoute
@@ -104,6 +105,40 @@ def test_evidence_answer_uses_accepted_candidate_ids() -> None:
     assert call["instructions"] == GROUNDING_PROMPT
     assert "candidate_id=transfer:1" in str(call["input"])
     assert "temperature" not in call
+
+
+def test_answer_preserves_readable_plain_text_line_breaks() -> None:
+    parsed = GroundedAnswer(
+        accepted_candidate_ids=["transfer:1"],
+        rejected_candidate_ids=[],
+        answer_state="answered",
+        answer_text="Трансфер:\n- з Дніпра коштує 100 грн.\n- оплачується окремо.",
+    )
+    candidate = _candidate(
+        content="Трансфер з Дніпра коштує 100 грн. Трансфер оплачується окремо.",
+    )
+
+    result = _generator(FakeOpenAIClient(parsed=parsed)).answer(
+        route=_route(),
+        candidates=(candidate,),
+    )
+
+    assert result.answer_state == "answered"
+    assert result.answer_text == (
+        "Трансфер:\n"
+        "- з Дніпра коштує 100 грн.\n"
+        "- оплачується окремо."
+    )
+
+
+def test_inline_model_bullets_are_split_into_lines() -> None:
+    assert normalize_answer_text_layout(
+        "У вартість входить: - розважальна програма - відвідування поні-ферми",
+    ) == (
+        "У вартість входить:\n"
+        "- розважальна програма\n"
+        "- відвідування поні-ферми"
+    )
 
 
 def test_irrelevant_candidates_return_fixed_fallback() -> None:

@@ -38,6 +38,9 @@ Rules:
 - If evidence is insufficient, return answer_state="not_found" and answer_text exactly:
   {FIXED_NOT_FOUND_FALLBACK}
 - If answering, write concise Ukrainian using only accepted candidate facts.
+- Use Telegram plain text only: no HTML, no Markdown tables, no visible citations.
+- Format lists as readable plain-text bullets, one item per line starting with "- ".
+- Use short paragraphs or line breaks for prices, schedules, included services, and programs.
 - Do not invent prices, schedules, age limits, contacts, discounts, or policies.
 """.strip()
 
@@ -51,6 +54,9 @@ PROTECTED_FACT_RE = re.compile(
     r"\b\d+\s?(?:років|роки|року|р\.|км|хв|год)\b)",
     re.IGNORECASE,
 )
+INLINE_BULLET_RE = re.compile(r"\s+-\s+")
+INLINE_BULLET_INTRO_RE = re.compile(r":\s+-\s+")
+HORIZONTAL_WHITESPACE_RE = re.compile(r"[^\S\r\n]+")
 TOKEN_RE = re.compile(r"[\wА-Яа-яІіЇїЄєҐґ']+", re.UNICODE)
 ALLOWED_SUPPORT_TOKENS = {
     "berry",
@@ -105,7 +111,7 @@ class GroundedAnswer(BaseModel):
     @field_validator("answer_text")
     @classmethod
     def normalize_answer_text(cls, value: str) -> str:
-        return " ".join(value.strip().split())
+        return normalize_answer_text_layout(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +262,7 @@ def enforce_grounded_answer(
     accepted_content = "\n".join(
         candidates_by_id[candidate_id].content for candidate_id in accepted_ids
     )
-    answer_text = " ".join(answer.answer_text.strip().split())
+    answer_text = normalize_answer_text_layout(answer.answer_text)
     if not answer_text or answer_text == FIXED_NOT_FOUND_FALLBACK:
         return fallback_answer(rejected_candidate_ids=rejected_ids)
     if _has_unsupported_protected_facts(answer_text, accepted_content):
@@ -290,6 +296,40 @@ def _has_unsupported_protected_facts(answer_text: str, evidence_text: str) -> bo
         if str(match).casefold() not in evidence_normalized:
             return True
     return False
+
+
+def normalize_answer_text_layout(value: str) -> str:
+    normalized = _normalize_line_whitespace(value)
+    if normalized == FIXED_NOT_FOUND_FALLBACK:
+        return normalized
+    return _normalize_line_whitespace(_break_inline_bullets(normalized))
+
+
+def _normalize_line_whitespace(value: str) -> str:
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    normalized_lines: list[str] = []
+    previous_blank = False
+    for line in lines:
+        normalized_line = HORIZONTAL_WHITESPACE_RE.sub(" ", line).strip()
+        if not normalized_line:
+            if normalized_lines and not previous_blank:
+                normalized_lines.append("")
+            previous_blank = True
+            continue
+        normalized_lines.append(normalized_line)
+        previous_blank = False
+    while normalized_lines and not normalized_lines[-1]:
+        normalized_lines.pop()
+    return "\n".join(normalized_lines)
+
+
+def _break_inline_bullets(value: str) -> str:
+    if "\n" in value:
+        return value
+    if ": -" not in value and value.count(" - ") < 2:
+        return value
+    text = INLINE_BULLET_INTRO_RE.sub(":\n- ", value)
+    return INLINE_BULLET_RE.sub("\n- ", text)
 
 
 def _has_low_content_support(answer_text: str, evidence_text: str) -> bool:
