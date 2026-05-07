@@ -6,6 +6,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from app.services.knowledge_base.ingest.parser import parse_knowledge_base
+from app.services.knowledge_base.retrieval.lexical import (
+    DEFAULT_LEXICAL_INDEX_PATH,
+    build_lexical_index_from_manifest,
+)
+from app.services.knowledge_base.taxonomy import DEFAULT_TAXONOMY_PATH
 from app.services.knowledge_base.types import SelectableSourceFormat
 
 DEFAULT_INPUT_DIR = Path("data/knowledge_base/raw_sources")
@@ -41,6 +46,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"Path to parser config TOML (default: {DEFAULT_CONFIG_PATH.as_posix()})",
     )
     parser.add_argument(
+        "--taxonomy",
+        type=Path,
+        default=DEFAULT_TAXONOMY_PATH,
+        help=f"Path to KB taxonomy TOML (default: {DEFAULT_TAXONOMY_PATH.as_posix()})",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
@@ -50,6 +61,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="append",
         choices=("csv", "xlsx"),
         help="Limit parsing to one or more source formats. Repeat to select multiple formats.",
+    )
+    parser.add_argument(
+        "--lexical-index",
+        type=Path,
+        default=None,
+        help=(
+            "Path for SQLite FTS5 lexical index "
+            f"(default: output-dir/{DEFAULT_LEXICAL_INDEX_PATH.name})"
+        ),
+    )
+    parser.add_argument(
+        "--skip-lexical-index",
+        action="store_true",
+        help="Skip rebuilding the local SQLite lexical index.",
     )
     return parser
 
@@ -84,6 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_dir=args.input_dir,
             output_dir=args.output_dir,
             config_path=args.config,
+            taxonomy_path=args.taxonomy,
             source_formats=_normalize_source_formats(args.source_format),
         )
     except Exception:
@@ -110,6 +136,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             result.discovered_source_count,
             result.success_count,
         )
+
+    if not result.all_files_failed and not args.skip_lexical_index:
+        try:
+            index_path = args.lexical_index or (args.output_dir / DEFAULT_LEXICAL_INDEX_PATH.name)
+            index_report = build_lexical_index_from_manifest(
+                result.manifest_path,
+                index_path=index_path,
+            )
+            logger.info(
+                "kb_lexical_index_completed index=%s candidate_count=%s",
+                index_report.index_path.as_posix(),
+                index_report.candidate_count,
+            )
+        except Exception:
+            logger.exception("kb_lexical_index_failed")
+            return 1
 
     return 1 if result.all_files_failed else 0
 

@@ -1,352 +1,228 @@
-﻿# berry-info-bot
+# berry-info-bot
 
-Production-light, future-supportable backend skeleton for a Telegram bot.
+Telegram bot for Berry Land visitor questions. The MVP serves deterministic menu flows and a
+production RAG path for free-text questions over the local knowledge base.
 
-## What this version does
+## Architecture
 
-- Runs FastAPI with `GET /health`
-- Runs aiogram 3 long polling in the same process lifecycle
-- Initializes async SQLAlchemy engine/session scaffold (`asyncpg`)
-- Uses structured JSON logging
-- Provides Windows-friendly task script and Unix `Makefile`
-- Provides a scenario-driven Telegram menu with inline navigation and back flow
-- Stores bot UI texts/links in typed resource maps (`StrEnum` keys)
-- Handles keyword trigger `2026` and friendly fallbacks for unknown input
+- `app.main`: FastAPI app plus aiogram long polling lifecycle.
+- `app.bot`: Telegram commands, menu callbacks, and free-text handlers.
+- `app.services.knowledge_base.query_router`: one structured LLM call for routing and
+  canonicalization.
+- `app.services.knowledge_base.retrieval`: OpenAI vector-store search plus local SQLite FTS5
+  lexical search.
+- `app.services.knowledge_base.answer_generator`: evidence-only structured answer generation.
+- `data/knowledge_base/taxonomy.toml`: controlled directions/topics used by ingest and routing.
 
-## Code map (where to add things)
+There is no production database service in the MVP.
 
-- `src/app/main.py`: process entrypoint (`python -m app.main`)
-- `src/app/bootstrap`: startup/shutdown orchestration for bot + DB
-- `src/app/api`: FastAPI app factory and routes
-- `src/app/bot`: aiogram factories, routers, handlers
-- `src/app/infra`: infrastructure adapters (DB scaffold)
-- `src/app/core`: configuration, constants, logging
+## Environment
 
-When adding features:
-- Add HTTP routes in `app/api/routes`
-- Add Telegram handlers in `app/bot/handlers` and include them in `app/bot/routers`
-- Add repositories/adapters in `app/infra`
-
-## Environment strategy
-
-This project intentionally separates local and docker env files because DB hostnames differ by runtime:
-
-- Local Python run: DB host is `localhost`
-- Docker Compose run: DB host is service name `db`
-
-Create env files from templates:
+Create one runtime env file:
 
 ```powershell
-Copy-Item .env.local.example .env.local
-Copy-Item .env.docker.example .env.docker
+Copy-Item .env.example .env
 ```
 
-Required values:
-- `TELEGRAM_BOT_TOKEN`
-- `DATABASE_URL` (must start with `postgresql+asyncpg://`)
-- `ADMIN_USER_IDS`
-- `DEBUG_COMMANDS_MODE=disabled|admins|public` (default: `admins`)
+Required:
 
-## Windows commands (recommended)
+- `TELEGRAM_BOT_TOKEN`
+- `OPENAI_API_KEY`
+- `OPENAI_QUERY_ROUTER_MODEL`
+- `OPENAI_QUERY_ROUTER_REASONING_EFFORT`
+- `OPENAI_ANSWER_MODEL`
+- `OPENAI_ANSWER_REASONING_EFFORT`
+- `OPENAI_VECTOR_STORE_ID`
+- `KB_MANIFEST_PATH`
+- `KB_LEXICAL_INDEX_PATH`
+
+Useful defaults:
+
+- `OPENAI_QUERY_ROUTER_MODEL=gpt-5.4-nano`
+- `OPENAI_QUERY_ROUTER_REASONING_EFFORT=none`
+- `OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS=10`
+- `OPENAI_ANSWER_MODEL=gpt-5.4-mini`
+- `OPENAI_ANSWER_REASONING_EFFORT=low`
+- `OPENAI_ANSWER_TIMEOUT_SECONDS=10`
+- `OPENAI_KB_SEARCH_MAX_RESULTS=3`
+- `OPENAI_KB_SCORE_THRESHOLD=0.5`
+- `QUERY_CONTEXT_TTL_SECONDS=900`
+
+The runtime reads `.env` only. `.env.local` is ignored by the app and should be treated only as a
+legacy local file name. Do not commit `.env`, `.env.local`, `.env.docker`, or secrets.
+
+Leave `OPENAI_QUERY_ROUTER_REASONING_EFFORT` or `OPENAI_ANSWER_REASONING_EFFORT` empty when using
+a model that does not support the Responses API `reasoning` parameter.
+
+## Local Run
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 install
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
-```
-
-Local run:
-
-```powershell
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py --replace
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 run
 ```
 
-Docker run:
+Health endpoint:
+
+```text
+GET /health
+```
+
+Readiness returns `503` if Telegram polling failed, required OpenAI/vector settings are missing, or
+the KB manifest / lexical index files are absent.
+
+## Production Deploy
+
+Docker Compose runs only the app service:
 
 ```powershell
+Copy-Item .env.example .env
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 docker-up
 ```
 
-Stop Docker:
+Before deploy, build or mount KB artifacts:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 docker-down
-```
+- `data/knowledge_base/processed/manifest.json`
+- `data/knowledge_base/processed/kb_lexical.sqlite3`
+- synced OpenAI vector store matching `OPENAI_VECTOR_STORE_ID`
 
-## Unix-like commands
+The app does not rebuild KB automatically on startup.
 
-```bash
-make install
-make lint
-make test
-make run
-make docker-up
-make docker-down
-```
+## KB Rebuild
 
-## Quick test matrix
+Raw exports go into `data/knowledge_base/raw_sources` and are ignored by Git.
 
-| Scenario | Setup | Command | Expected |
-| --- | --- | --- | --- |
-| Windows local app | `.env.local` configured, local Postgres available | `python -m app.main` | startup logs + `/health` returns 200 |
-| Docker local stack | `.env.docker` configured | `docker compose up --build` | `app` + `db` run, `/health` returns 200 |
-| Unit test | deps installed | `pytest -q` | all tests pass |
-| Lint | deps installed | `ruff check src tests` | no violations |
+Controlled files:
 
-Health check:
+- `data/knowledge_base/parser_config.toml`: source files, sheet indexes, parser hints.
+- `data/knowledge_base/taxonomy.toml`: business directions, topics, source mappings, periods.
 
-```bash
-curl http://localhost:8080/health
-```
-
-Expected JSON:
-
-```json
-{"status":"ok"}
-```
-
-## Common failures and fixes
-
-- `make` fails on Windows (`/usr/bin/make` not found):
-  - Use `scripts/dev.ps1` commands instead.
-- PowerShell blocks script execution:
-  - Use `powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 <task>`.
-- Startup fails with DB connection error:
-  - Verify the right env file for the runtime (`.env.local` vs `.env.docker`).
-  - Check `DATABASE_URL` host: `localhost` for local Python, `db` for Docker.
-- Telegram auth/startup errors:
-  - Verify bot token is valid and not revoked.
-  - Ensure only one polling instance runs per token.
-
-## JetBrains note (Windows)
-
-JetBrains make-target configurations require GNU Make, which Windows does not ship by default.  
-Use PowerShell run configurations that call `scripts/dev.ps1` tasks or direct Python commands.
-
-## Knowledge-base CSV/XLSX parser
-
-Use this parser to convert manually exported Google Sheets tabs into Markdown files for vector
-store ingestion. Rich layout-heavy sheets should be exported as `.xlsx`; plain table-shaped tabs
-can stay as `.csv`.
-
-### Expected local folder structure
-
-```text
-data/
-  knowledge_base/
-    parser_config.toml
-    raw_sources/
-      01-faq.csv
-      02-catalog.csv
-      03-offers.xlsx
-    processed/
-      manifest.json
-      markdown/
-        01-faq.md
-        02-catalog.md
-        03-offers-family-day.md
-```
-
-Recommended source naming: `NN-topic-name.csv` or `NN-topic-name.xlsx`.
-Local source exports in `data/knowledge_base/raw_sources` are ignored by Git, so you can drop real
-customer workbooks there without staging them.
-When workbook or sheet names use Cyrillic, the parser automatically transliterates them into
-stable ASCII markdown filenames, so you do not need to rename tabs manually.
-
-### Run parser
+Rebuild local Markdown, manifest, and SQLite FTS5 index:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
 ```
 
-Custom paths:
-
-```powershell
-.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli `
-  --input-dir data/knowledge_base/raw_sources `
-  --output-dir data/knowledge_base/processed `
-  --config data/knowledge_base/parser_config.toml `
-  --source-format xlsx
-```
-
-### Input/output behavior
-
-- Discovers all `*.csv` and `*.xlsx` files in the input directory in lexicographic order.
-- Reads CSV with strict decoding fallback (`utf-8-sig`, then `cp1251`) and strict CSV parsing.
-- Reads visible workbook sheets from `.xlsx` exports and parses each visible sheet as a separate
-  source unit.
-- Supports per-sheet parser hints through `parser_config.toml` with `parser_profile` values:
-  `qa_table`, `section_table`, `column_split`, and `outline_sheet`.
-- Supports workbook-level `sheet_indexes = [1, 2, 3]` selection when you want to parse only
-  specific tabs by their 1-based visible sheet order.
-- Fails the workbook parse when configured `sheet_indexes` reference tabs that are not present
-  among the currently visible sheets, instead of silently under-parsing.
-- Supports format filtering through parser config (`[defaults].source_formats`) or CLI
-  `--source-format` flags, for example XLSX-only runs while CSV parsing is temporarily disabled.
-- Prefers conservative parsing for freeform workbook sheets:
-  ambiguous heading/paragraph rows fail with diagnostics instead of being guessed.
-- Removes previously generated markdown for a source before re-parsing it, so a newly failed sheet
-  does not leave stale `.md` files behind in `processed/markdown`.
-- Normalizes whitespace while preserving meaningful paragraph breaks.
-- Drops fully empty rows and globally empty columns.
-- Produces Markdown files in `processed/markdown` and writes one `processed/manifest.json`
-  including source format, workbook/sheet metadata, and parser diagnostics for failures.
-- Continues after file-level failures and returns non-zero exit code only if all files fail.
-
-## OpenAI Vector Store Sync And Smoke Test
-
-This project supports deterministic sync into an existing OpenAI vector store using replace-by-
-`logical_id` semantics.
-
-### Why replace by `logical_id` instead of append forever
-
-- Prevents stale content accumulation when source markdown is regenerated.
-- Ensures retrieval results reflect only the current KB version for each logical document.
-- Keeps future admin-triggered refresh deterministic (`/kb_refresh` can call the same sync service).
-
-### Sync command
+Sync Markdown to OpenAI vector store:
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py --replace
 ```
 
-Useful options:
+Use `--replace` when a source was removed, renamed, or materially changed so stale vector-store
+files are deleted.
+
+When replacing or adding a brand-new XLSX file:
+
+1. Put the workbook in `data/knowledge_base/raw_sources`. Raw workbooks are local/ignored files,
+   so do not rely on Git to preserve them.
+2. Inspect visible worksheet order and names before editing config. `sheet_indexes` use visible-tab
+   order, not Excel's hidden-sheet order.
+3. Update `data/knowledge_base/parser_config.toml`:
+   - set the workbook's `sheet_indexes`;
+   - add or update sheet-name comments for humans;
+   - add `title` when the Markdown H1 should be cleaner than the first cell;
+   - add `forced_header_rows` for short rows that must become headings;
+   - add `forced_paragraph_rows` for scripts, prose, table rows, or cells whose first line looks
+     like a heading but should stay body text;
+   - add `ignore_rows` for spreadsheet-only headers, helper rows, obsolete notes, or duplicate
+     table labels.
+4. Update `data/knowledge_base/taxonomy.toml` with one `[[sources]]` mapping per useful tab:
+   `source_file`, `sheet_name`, `direction_id`, `topic_ids`, and `period_label`.
+5. Rebuild local Markdown, manifest, and SQLite FTS5 index:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+   ```
+
+6. Check `data/knowledge_base/processed/manifest.json` before syncing. It should contain all
+   expected tabs and `errors: []`.
+7. Inspect generated headings in `data/knowledge_base/processed/markdown`. The best search files
+   have one clear H1, meaningful H2/H3 sections, and no repeated table-label headings such as
+   `NAME`, `DESCRIPTION`, or `PRICE`.
+8. Run the local checks:
+
+   ```powershell
+   .\.venv\Scripts\ruff.exe check src tests
+   .\.venv\Scripts\pytest.exe -q
+   ```
+
+9. Sync vector store with `--replace` after the local Markdown is clean. Use `--replace` whenever a
+   source was removed, renamed, reordered, or materially changed.
+10. Add/update eval cases in `tests/evals/qa_cases.yaml`, then manually test
+    direction-sensitive questions.
+
+Current active directions:
+
+- `op`: ОП, організовані програми.
+- `sv`: СВ, сімейний відпочинок.
+
+Future inactive directions are already named in taxonomy: `camping`, `birthdays`,
+`school_excursions`.
+
+## Telegram User Stories
+
+- User opens `/start` or `/menu`: bot shows deterministic menu.
+- User taps buttons or exact menu keywords: bot stays deterministic.
+- User writes a greeting or smalltalk: bot returns short service text.
+- User asks a KB question: bot routes, searches, and answers only from evidence.
+- User asks about price/schedule/transfer without a direction: bot asks which direction to use.
+- User asks something absent from KB: bot returns the fixed not-found fallback.
+
+## RAG Flow
+
+1. Commands, callbacks, and exact menu labels are handled without LLM.
+2. Normal free text goes to one structured routing/canonicalization call.
+3. Router returns route, Ukrainian canonical question, vector query, lexical terms, `topic_hint`,
+   `direction_hints`, and optional `target_date`.
+4. Hybrid search runs broad vector and local lexical retrieval.
+5. `topic_hint` and `direction_hints` are ranking boosts, not hard filters.
+6. Candidate IDs are deduplicated and bounded.
+7. Answer model receives candidates as untrusted data.
+8. If accepted evidence is empty or insufficient, answer is exactly:
+
+```text
+Такого не знайшлось в базі знань. Спробуйте зателефонувати менеджеру для більш детальної консультації.
+```
+
+## Limitations
+
+- No visible citations in Telegram answers yet.
+- No automatic KB rebuild on startup.
+- Direction/date ambiguity is intentionally conservative.
+- Answer quality depends on KB source freshness and vector-store sync.
+
+## Runtime Cost Controls
+
+- Router: default `gpt-5.4-nano` with `reasoning=none`.
+- Answer generator: default `gpt-5.4-mini` with `reasoning=low`.
+- Vector search count: `OPENAI_KB_SEARCH_MAX_RESULTS`.
+- Local lexical search count: `DEFAULT_LEXICAL_MAX_RESULTS` in
+  `src/app/services/knowledge_base/retrieval/lexical.py`.
+- Answer LLM candidate cap: `ANSWER_INPUT_MAX_CANDIDATES` and
+  `ANSWER_CANDIDATE_MAX_CHARS` in `src/app/services/knowledge_base/answer_generator.py`.
+- Telegram free-text routing/search/answer runs via `asyncio.to_thread`; this avoids blocking the
+  async bot loop and does not add extra OpenAI calls, tokens, vector searches, or API cost.
+
+## Checks
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\kb_sync_vector_store.py `
-  --manifest data/knowledge_base/processed/manifest.json `
-  --dry-run `
-  --only-category 02-Program-Description `
-  --only-logical-id 02-program-description `
-  --replace
+.\.venv\Scripts\ruff.exe check src tests
+.\.venv\Scripts\pytest.exe -q
+.\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
 ```
 
-Environment variables used by sync/search:
-
-- `OPENAI_API_KEY`: authentication for OpenAI SDK.
-- `OPENAI_VECTOR_STORE_ID`: target vector store id to sync/search.
-- `OPENAI_KB_SEARCH_MAX_RESULTS`: optional override (strict default is `3`).
-- `OPENAI_KB_SCORE_THRESHOLD`: optional override (strict default is `0.7`).
-
-### Query interpretation policy and optional LLM fallback
-
-The query pipeline stays rules-first. Deterministic classifier/scope/planner run first, and the
-LLM is only an optional structured fallback for interpretation when policy allows it.
-
-Environment variables:
-
-- `KB_QUERY_LLM_MODE=disabled|fallback|forced`
-- `KB_QUERY_LLM_ALLOWED_FOR=classifier,scope,planner,retrieval`
-- `KB_QUERY_RULES_MIN_CONFIDENCE=0.85`
-- `KB_QUERY_ENABLE_STAGE_RULES=true|false`
-- `KB_QUERY_ENABLE_STAGE_SCOPE=true|false`
-- `KB_QUERY_ENABLE_STAGE_PLANNER=true|false`
-- `KB_QUERY_ENABLE_STAGE_RETRIEVAL=true|false`
-- `KB_QUERY_ENABLE_STAGE_RENDERER=true|false`
-- `KB_QUERY_LLM_MODEL=`: no hardcoded default; set this only when enabling LLM mode
-- `KB_QUERY_LLM_TIMEOUT_SECONDS=10`
-- `KB_QUERY_LLM_CACHE_SIZE=128`
-- `KB_QUERY_LLM_MAX_RETRIEVAL_VARIANTS=1`
-- `DEBUG_COMMANDS_MODE=disabled|admins|public`: debug command access policy
-
-Recommended lightweight fallback model: `gpt-5.4-nano`.
-The interpreter uses the Responses API with structured parsing and `reasoning={"effort":"none"}`.
-The code does not force a specific model; it uses whatever `KB_QUERY_LLM_MODEL` is set to.
-The same structured interpretation call can now also return retrieval hints:
-primary retrieval query, optional alternate queries, and retrieval keywords.
-
-Execution modes:
-
-- `disabled`: current deterministic behavior only, no LLM calls.
-- `fallback`: rules stay primary; LLM is used only for uncertain or disabled interpretation stages.
-- `forced`: always use the LLM for the allowed interpretation stages so you can compare quality.
-
-Behavior examples:
-
-- Clear broad query in `disabled` or `fallback`:
-  `Які є види організованих програм?` stays deterministic and skips the LLM.
-- Ambiguous query in `fallback`:
-  `Порадь щось для відпочинку` can trigger structured LLM interpretation and retrieval planning,
-  then continues through the same app-controlled renderer/retrieval pipeline.
-- Same ambiguous query by mode:
-  `disabled` keeps deterministic safe fallback, `fallback` may call LLM only if needed, `forced`
-  always routes interpretation through the LLM layer.
-- Zoo/animal wording:
-  `хто у вас є в зоопарку?` can be deterministically expanded toward Berry Land KB phrases such as
-  `екскурсія на поні-ферму`, `тварини`, and `ранчо`, with LLM retrieval hints available as a
-  second-layer refinement.
-
-### Smoke test command
+Opt-in real OpenAI evals are skipped by default:
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\kb_smoke_test.py "how to register for the program?"
+$env:RUN_OPENAI_EVALS='1'
+.\.venv\Scripts\pytest.exe tests\test_openai_llm_evals.py -q
 ```
 
-The smoke test prints top hits (score, filename, logical_id, category, excerpt). If no result is
-relevant enough, it prints: `No relevant information found in the knowledge base.`
-Use `--rewrite-query` to enable query rewriting when needed for experiments.
+For quick vector-store smoke testing:
 
-### Telegram dev command
-
-For test/dev checks in chat, the bot also supports:
-
-```text
-/vs your question goes here
+```powershell
+.\.venv\Scripts\python.exe .\scripts\kb_smoke_test.py "Які є види програм?"
 ```
-
-It returns one message per found result. Each message has:
-- service block (score, file name, file id, logical_id, category, threshold/top score)
-- text block (full found text, without excerpt trimming)
-
-If no relevant result is found, it returns a service block with fallback status and the fallback text.
-This command is intended for development/testing convenience.
-
-`/vs` remains raw vector-search debug only. It does not use the LLM policy layer.
-Access is controlled by `DEBUG_COMMANDS_MODE`:
-- `disabled`: blocks all debug commands.
-- `admins`: allows only users listed in `ADMIN_USER_IDS` (default).
-- `public`: allows all users.
-
-Additional temporary query-policy debug commands:
-
-```text
-/qclass your question
-/qplan your question
-/qroute your question
-/qretrieve your question
-/qanswer your question
-```
-
-What they show:
-
-- `/qclass`: final classification and its source (`rules`, `llm`, or `default`).
-- `/qplan`: final intent/scope/strategy plus retrieval plan, policy trace, and stage toggles.
-- `/qroute`: policy-only trace, useful for manually checking when LLM fallback was requested.
-- `/qretrieve`: retrieval plan plus executed queries, stop reason, and merged-hit counts.
-- `/qanswer`: rendered answer plus the same routing metadata.
-
-Manual evaluation flow:
-
-1. Keep `KB_QUERY_LLM_MODE=disabled` and run `/qplan` for a few clear queries.
-2. Switch to `KB_QUERY_LLM_MODE=fallback`, set `KB_QUERY_LLM_MODEL`, then compare `/qroute`,
-   `/qretrieve`, and `/qanswer` for ambiguous queries.
-3. Switch to `KB_QUERY_LLM_MODE=forced` to compare the LLM interpretation path against the
-   deterministic path.
-4. Tune the checked-in prompt guide at
-   `src/app/services/knowledge_base/query/llm_prompt_guide.md` against the eval cases in
-   `src/app/services/knowledge_base/query/llm_eval_cases.md`.
-5. To mine fresh KB-native phrases from processed markdown, run:
-
-```text
-python scripts/export_kb_query_prompt_candidates.py
-```
-
-If the selected model is unavailable or at capacity, the app does not crash. The pipeline falls
-back safely to deterministic behavior and the reason appears in debug output as
-`llm_failure_reason=...`, especially via `/qroute`, `/qplan`, `/qretrieve`, or `/qanswer`.
-
-## Security note
-
-- Never commit real secrets to tracked files.
-- Keep real values only in local `.env.local` / `.env.docker`.
-

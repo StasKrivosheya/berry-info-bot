@@ -68,6 +68,7 @@ def render_outline_sheet(
     source_slug: str,
     default_title: str,
     override: SourceOverride,
+    explicit_title: bool = False,
 ) -> tuple[str, list[RenderedMarkdown], int, int]:
     selected_rows = select_outline_rows(sheet, override)
     if not selected_rows:
@@ -77,7 +78,7 @@ def render_outline_sheet(
     diagnostics: list[ParseDiagnostic] = []
     blocks: list[OutlineBlock] = []
     document_title = normalize_cell_text(default_title) or "Untitled Knowledge Base"
-    has_title = False
+    has_title = explicit_title
     forced_header_rows = set(override.forced_header_rows)
     forced_paragraph_rows = set(override.forced_paragraph_rows)
 
@@ -189,7 +190,7 @@ def _classify_candidate(
 
     headerish = _is_headerish_text(text)
     strong_header_cue = _has_strong_header_cue(candidate) or _looks_like_display_header(text)
-    if candidate.row_index == first_row_index and headerish:
+    if candidate.row_index == first_row_index and headerish and not has_title:
         strong_header_cue = True
     if force_header or (headerish and strong_header_cue):
         kind = (

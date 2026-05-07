@@ -106,6 +106,9 @@ class ManifestEntry:
     row_count: int
     non_empty_cell_count: int
     content_hash_sha256: str
+    direction_id: str | None = None
+    topic_ids: tuple[str, ...] = ()
+    period_label: str | None = None
     diagnostics: list[ParseDiagnostic] = field(default_factory=list)
 
     @property
@@ -129,6 +132,9 @@ class ManifestEntry:
             "row_count": self.row_count,
             "non_empty_cell_count": self.non_empty_cell_count,
             "content_hash_sha256": self.content_hash_sha256,
+            "direction_id": self.direction_id,
+            "topic_ids": list(self.topic_ids),
+            "period_label": self.period_label,
             "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
         }
 

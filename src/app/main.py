@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
     return create_api_app(
         app_name=settings.app_name,
         lifespan=create_app_lifespan(settings),
+        settings=settings,
     )
 
 

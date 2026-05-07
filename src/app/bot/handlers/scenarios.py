@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
+import time
+from functools import lru_cache
+
 from aiogram import F, Router
+from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -18,9 +25,28 @@ from app.bot.scenarios.catalog import (
 )
 from app.bot.scenarios.keyboards import build_main_menu_keyboard, build_scenario_keyboard
 from app.bot.scenarios.navigation import ScenarioMessenger, resolve_chat_id
+from app.core.config import get_settings
+from app.services.knowledge_base.answer_generator import (
+    FIXED_NOT_FOUND_FALLBACK,
+    OpenAIGroundedAnswerGenerator,
+    fallback_answer,
+)
+from app.services.knowledge_base.query_router import (
+    SERVICE_FALLBACK_TEXT,
+    OpenAIQueryRouter,
+    QueryContextKey,
+    QueryContextStore,
+    QueryRoutingResult,
+    route_free_text_message,
+)
+from app.services.knowledge_base.retrieval import HybridSearchService
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="scenarios")
 messenger = ScenarioMessenger()
+LOG_EVENT_KB_ANSWERED = "bot_kb_answered"
+TELEGRAM_TYPING_REFRESH_SECONDS = 4.0
 
 
 @router.message(CommandStart())
@@ -155,6 +181,22 @@ async def keyword_2026_handler(message: Message) -> None:
     )
 
 
+@router.message(F.text.startswith("/"))
+async def unknown_command_handler(message: Message) -> None:
+    """Handle unsupported commands without invoking the LLM router."""
+
+    if message.from_user is None:
+        return
+
+    await messenger.send(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        user_id=message.from_user.id,
+        text=UNKNOWN_TEXT_RESPONSE,
+        reply_markup=build_main_menu_keyboard(),
+    )
+
+
 @router.message(~F.text)
 async def unknown_message_type_handler(message: Message) -> None:
     """Handle non-text content with a friendly placeholder response."""
@@ -173,15 +215,146 @@ async def unknown_message_type_handler(message: Message) -> None:
 
 @router.message(F.text)
 async def unknown_text_handler(message: Message) -> None:
-    """Handle unknown text content with guidance."""
+    """Route normal free text through the production KB routing contract."""
 
-    if message.from_user is None:
+    if message.from_user is None or message.text is None:
         return
 
-    await messenger.send(
-        bot=message.bot,
-        chat_id=message.chat.id,
-        user_id=message.from_user.id,
-        text=UNKNOWN_TEXT_RESPONSE,
-        reply_markup=build_main_menu_keyboard(),
+    await _send_typing_once(message.bot, message.chat.id)
+    typing_task = asyncio.create_task(_refresh_typing_until_done(message.bot, message.chat.id))
+    try:
+        routing_result = await asyncio.to_thread(
+            _route_free_text_for_message,
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            text=message.text,
+        )
+        if routing_result.route is not None and routing_result.route.route == "menu_help":
+            text = MENU_MESSAGE_TEXT
+        elif routing_result.should_search and routing_result.route is not None:
+            text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
+        else:
+            text = routing_result.response_text
+
+        await messenger.send(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            text=text,
+            reply_markup=build_main_menu_keyboard(),
+        )
+    finally:
+        typing_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await typing_task
+
+
+@lru_cache(maxsize=1)
+def _create_query_router() -> OpenAIQueryRouter:
+    settings = get_settings()
+    api_key = settings.openai_api_key_value
+    model = settings.openai_query_router_model
+    if api_key is None or model is None:
+        msg = "query_router_unavailable:missing_openai_api_key_or_model"
+        raise RuntimeError(msg)
+    return OpenAIQueryRouter(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=settings.openai_query_router_timeout_seconds,
+        reasoning_effort=settings.openai_query_router_reasoning_effort,
     )
+
+
+@lru_cache(maxsize=1)
+def _create_query_context_store() -> QueryContextStore:
+    settings = get_settings()
+    return QueryContextStore(ttl_seconds=settings.query_context_ttl_seconds)
+
+
+@lru_cache(maxsize=1)
+def _create_hybrid_search_service() -> HybridSearchService:
+    return HybridSearchService()
+
+
+@lru_cache(maxsize=1)
+def _create_answer_generator() -> OpenAIGroundedAnswerGenerator:
+    settings = get_settings()
+    api_key = settings.openai_api_key_value
+    model = settings.openai_answer_model
+    if api_key is None or model is None:
+        msg = "answer_generator_unavailable:missing_openai_api_key_or_model"
+        raise RuntimeError(msg)
+    return OpenAIGroundedAnswerGenerator(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=settings.openai_answer_timeout_seconds,
+        reasoning_effort=settings.openai_answer_reasoning_effort,
+    )
+
+
+def _route_free_text_for_message(*, chat_id: int, user_id: int, text: str) -> QueryRoutingResult:
+    try:
+        query_router = _create_query_router()
+    except Exception:
+        return QueryRoutingResult(
+            route=None,
+            response_text=SERVICE_FALLBACK_TEXT,
+            should_search=False,
+        )
+
+    return route_free_text_message(
+        router=query_router,
+        context_store=_create_query_context_store(),
+        context_key=QueryContextKey(chat_id=chat_id, user_id=user_id),
+        message=text,
+    )
+
+
+async def _send_typing_once(bot, chat_id: int) -> None:
+    with contextlib.suppress(Exception):
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+
+async def _refresh_typing_until_done(bot, chat_id: int) -> None:
+    while True:
+        await asyncio.sleep(TELEGRAM_TYPING_REFRESH_SECONDS)
+        await _send_typing_once(bot, chat_id)
+
+
+def _answer_searchable_route(route) -> str:
+    started_at = time.perf_counter()
+    vector_count = 0
+    lexical_count = 0
+    answer_result = fallback_answer()
+    try:
+        search_result = _create_hybrid_search_service().search(route)
+        vector_count = search_result.vector_result_count
+        lexical_count = search_result.lexical_result_count
+        answer_result = _create_answer_generator().answer(
+            route=route,
+            candidates=search_result.candidates,
+        )
+        return answer_result.answer_text
+    except Exception:
+        logger.warning("bot_kb_answer_failed", exc_info=True)
+        return FIXED_NOT_FOUND_FALLBACK
+    finally:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            (
+                "%s route=%s topic_hint=%s direction_hints=%s canonical_question=%r "
+                "vector_candidate_count=%s "
+                "lexical_candidate_count=%s accepted_candidate_ids=%s answer_state=%s "
+                "elapsed_ms=%s"
+            ),
+            LOG_EVENT_KB_ANSWERED,
+            route.route,
+            route.topic_hint,
+            ",".join(route.direction_hints),
+            route.canonical_question_uk,
+            vector_count,
+            lexical_count,
+            ",".join(answer_result.accepted_candidate_ids),
+            answer_result.answer_state,
+            elapsed_ms,
+        )

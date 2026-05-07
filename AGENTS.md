@@ -15,11 +15,8 @@ Preferred checks before commit:
 
 ## Environment files
 
-- Use `.env.local` for local Python run (DB host `localhost`)
-- Use `.env.docker` for Docker Compose run (DB host `db`)
-- Create from templates:
-  - `.env.local.example`
-  - `.env.docker.example`
+- Use `.env` for local Python and Docker Compose runs.
+- Create it from `.env.example`.
 
 ## Safety rules
 

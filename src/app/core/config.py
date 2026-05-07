@@ -1,32 +1,33 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.constants import (
-    DATABASE_URL_PREFIX,
     DEFAULT_APP_HOST,
     DEFAULT_APP_NAME,
     DEFAULT_APP_PORT,
-    DEFAULT_DEBUG_COMMANDS_MODE,
     DEFAULT_LOG_LEVEL,
-    ENV_FILE_FALLBACK,
-    ENV_FILE_LOCAL,
+    ENV_FILE,
 )
 
-DebugCommandsMode = Literal["disabled", "admins", "public"]
+OpenAIReasoningEffort = Literal["none", "low", "medium", "high", "xhigh"]
+
+DEFAULT_QUERY_ROUTER_MODEL = "gpt-5.4-nano"
+DEFAULT_QUERY_ROUTER_REASONING_EFFORT: OpenAIReasoningEffort = "none"
+DEFAULT_ANSWER_MODEL = "gpt-5.4-mini"
+DEFAULT_ANSWER_REASONING_EFFORT: OpenAIReasoningEffort = "low"
 
 
 class Settings(BaseSettings):
     """Single typed configuration object for the entire application."""
 
-    # Local Python runs are expected to use .env.local.
-    # .env remains a fallback to keep older local setups working.
     model_config = SettingsConfigDict(
-        env_file=(ENV_FILE_LOCAL, ENV_FILE_FALLBACK),
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -36,51 +37,86 @@ class Settings(BaseSettings):
     app_host: str = Field(default=DEFAULT_APP_HOST, validation_alias="APP_HOST")
     app_port: int = Field(default=DEFAULT_APP_PORT, validation_alias="APP_PORT")
     log_level: str = Field(default=DEFAULT_LOG_LEVEL, validation_alias="LOG_LEVEL")
-    debug_commands_mode: DebugCommandsMode = Field(
-        default=DEFAULT_DEBUG_COMMANDS_MODE,
-        validation_alias="DEBUG_COMMANDS_MODE",
-    )
 
     telegram_bot_token: SecretStr = Field(validation_alias="TELEGRAM_BOT_TOKEN")
-    database_url: str = Field(validation_alias="DATABASE_URL")
-    admin_user_ids_raw: str = Field(default="", validation_alias="ADMIN_USER_IDS")
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_vector_store_id: str | None = Field(
+        default=None,
+        validation_alias="OPENAI_VECTOR_STORE_ID",
+    )
+    openai_query_router_model: str | None = Field(
+        default=DEFAULT_QUERY_ROUTER_MODEL,
+        validation_alias="OPENAI_QUERY_ROUTER_MODEL",
+    )
+    openai_query_router_reasoning_effort: OpenAIReasoningEffort | None = Field(
+        default=DEFAULT_QUERY_ROUTER_REASONING_EFFORT,
+        validation_alias="OPENAI_QUERY_ROUTER_REASONING_EFFORT",
+    )
+    openai_query_router_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="OPENAI_QUERY_ROUTER_TIMEOUT_SECONDS",
+    )
+    openai_answer_model: str | None = Field(
+        default=DEFAULT_ANSWER_MODEL,
+        validation_alias="OPENAI_ANSWER_MODEL",
+    )
+    openai_answer_reasoning_effort: OpenAIReasoningEffort | None = Field(
+        default=DEFAULT_ANSWER_REASONING_EFFORT,
+        validation_alias="OPENAI_ANSWER_REASONING_EFFORT",
+    )
+    openai_answer_timeout_seconds: int = Field(
+        default=10,
+        validation_alias="OPENAI_ANSWER_TIMEOUT_SECONDS",
+    )
+    query_context_ttl_seconds: int = Field(
+        default=900,
+        validation_alias="QUERY_CONTEXT_TTL_SECONDS",
+    )
+    kb_manifest_path: Path = Field(
+        default=Path("data/knowledge_base/processed/manifest.json"),
+        validation_alias="KB_MANIFEST_PATH",
+    )
+    kb_lexical_index_path: Path = Field(
+        default=Path("data/knowledge_base/processed/kb_lexical.sqlite3"),
+        validation_alias="KB_LEXICAL_INDEX_PATH",
+    )
 
-    @field_validator("database_url")
+    @field_validator(
+        "openai_query_router_model",
+        "openai_answer_model",
+        "openai_vector_store_id",
+        "openai_query_router_reasoning_effort",
+        "openai_answer_reasoning_effort",
+        mode="before",
+    )
     @classmethod
-    def validate_database_url(cls, value: str) -> str:
-        if not value.startswith(DATABASE_URL_PREFIX):
-            msg = f"DATABASE_URL must start with '{DATABASE_URL_PREFIX}'"
-            raise ValueError(msg)
-        return value
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
-    @field_validator("debug_commands_mode", mode="before")
+    @field_validator("openai_query_router_timeout_seconds")
     @classmethod
-    def validate_debug_commands_mode(cls, value: object) -> DebugCommandsMode:
-        normalized = str(value or DEFAULT_DEBUG_COMMANDS_MODE).strip().casefold()
-        if normalized in {"disabled", "admins", "public"}:
-            return normalized  # type: ignore[return-value]
+    def clamp_query_router_timeout(cls, value: int) -> int:
+        return max(1, min(60, value))
 
-        msg = "DEBUG_COMMANDS_MODE must be one of: disabled, admins, public."
-        raise ValueError(msg)
+    @field_validator("openai_answer_timeout_seconds")
+    @classmethod
+    def clamp_answer_timeout(cls, value: int) -> int:
+        return max(1, min(60, value))
+
+    @field_validator("query_context_ttl_seconds")
+    @classmethod
+    def clamp_query_context_ttl(cls, value: int) -> int:
+        return max(30, min(24 * 60 * 60, value))
 
     @property
-    def admin_user_ids(self) -> tuple[int, ...]:
-        # ADMIN_USER_IDS is stored as CSV in env to stay easy to configure in Docker and CI.
-        # We parse and expose it as typed integers so downstream code can use it safely.
-        if not self.admin_user_ids_raw.strip():
-            return ()
-
-        parsed_ids: list[int] = []
-        for raw_value in self.admin_user_ids_raw.split(","):
-            stripped = raw_value.strip()
-            if not stripped:
-                continue
-            try:
-                parsed_ids.append(int(stripped))
-            except ValueError as exc:
-                msg = "ADMIN_USER_IDS must be a comma-separated list of integers."
-                raise ValueError(msg) from exc
-        return tuple(parsed_ids)
+    def openai_api_key_value(self) -> str | None:
+        if self.openai_api_key is None:
+            return None
+        normalized = self.openai_api_key.get_secret_value().strip()
+        return normalized or None
 
 
 @lru_cache(maxsize=1)

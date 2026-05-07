@@ -5,7 +5,7 @@ from functools import lru_cache
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.constants import ENV_FILE_FALLBACK, ENV_FILE_LOCAL
+from app.core.constants import ENV_FILE
 
 DEFAULT_SEARCH_MAX_RESULTS = 3
 DEFAULT_SCORE_THRESHOLD = 0.7
@@ -19,7 +19,7 @@ class KnowledgeBaseOpenAISettings(BaseSettings):
     """Settings for knowledge-base vector store sync and search."""
 
     model_config = SettingsConfigDict(
-        env_file=(ENV_FILE_LOCAL, ENV_FILE_FALLBACK),
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

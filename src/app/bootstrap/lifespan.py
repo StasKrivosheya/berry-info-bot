@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from app.bot.factory import create_bot, create_dispatcher
 from app.core.config import Settings
 from app.core.constants import POLLING_TASK_NAME
-from app.infra.database import Database, create_database, dispose_database
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,6 @@ LOG_EVENT_SHUTDOWN_COMPLETE = "application_shutdown_complete"
 class RuntimeState:
     """Lifecycle-owned runtime resources that must be closed on shutdown."""
 
-    database: Database | None = None
     bot: Bot | None = None
     dispatcher: Dispatcher | None = None
     polling_task: asyncio.Task[None] | None = None
@@ -79,12 +77,8 @@ def _record_polling_failure(state: RuntimeState, task: asyncio.Task[None]) -> No
 async def _startup_runtime(state: RuntimeState, settings: Settings) -> None:
     """Initialize resources and start polling as a managed background task."""
 
-    state.database = await create_database(settings.database_url)
     state.bot = create_bot(settings.telegram_bot_token.get_secret_value())
-    state.dispatcher = create_dispatcher(
-        settings.admin_user_ids,
-        debug_commands_mode=settings.debug_commands_mode,
-    )
+    state.dispatcher = create_dispatcher()
     # Polling is run in a task so FastAPI can continue serving /health concurrently.
     state.polling_task = asyncio.create_task(
         _run_polling_loop(state.dispatcher, state.bot),
@@ -106,7 +100,6 @@ async def _shutdown_runtime(state: RuntimeState) -> None:
     if state.bot is not None:
         await state.bot.session.close()
 
-    await dispose_database(state.database)
     logger.info(LOG_EVENT_SHUTDOWN_COMPLETE)
 
 
