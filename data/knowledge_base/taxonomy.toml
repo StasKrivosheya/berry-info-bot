@@ -25,7 +25,7 @@ aliases = [
   "парк для сімей",
   "відпочинок сім'єю",
 ]
-source_categories = ["СВ (КВІТЕНЬ-ТРАВЕНЬ)", "СВ (літо)", "Альтанка", "Трансфер"]
+source_categories = ["СВ (ТРАВЕНЬ)", "Альтанка", "Трансфер"]
 active = true
 
 [directions.camping]
@@ -74,7 +74,6 @@ aliases = [
   "в які дні",
   "які дні",
   "дати",
-  "квітень",
   "травень",
   "весна",
   "літо",
@@ -145,10 +144,10 @@ period_label = "актуальні описи програм 2026"
 
 [[sources]]
 source_file = "info-msg-26.xlsx"
-sheet_name = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
+sheet_name = "СВ (ТРАВЕНЬ)"
 direction_id = "sv"
 topic_ids = ["tickets", "schedule", "services", "food", "rules", "location"]
-period_label = "квітень-травень 2026"
+period_label = "травень 2026"
 
 [[sources]]
 source_file = "info-msg-26.xlsx"
@@ -184,10 +183,3 @@ sheet_name = "Табір"
 direction_id = "camping"
 topic_ids = ["tickets", "schedule", "services", "food", "rules"]
 period_label = "табір 2026"
-
-[[sources]]
-source_file = "info-msg-26.xlsx"
-sheet_name = "СВ (літо)"
-direction_id = "sv"
-topic_ids = ["tickets", "schedule", "services", "food", "rules", "location", "transfer"]
-period_label = "літо 2026"

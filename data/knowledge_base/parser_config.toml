@@ -6,16 +6,15 @@ source_formats = ["xlsx"]
 # "01-faq" = "faq"
 
 [files."info-msg-26.xlsx"]
-sheet_indexes = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+sheet_indexes = [1, 2, 3, 4, 5, 6, 7, 8]
 # sheet 1 = "ОП весна-літо"
-# sheet 2 = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
+# sheet 2 = "СВ (ТРАВЕНЬ)"
 # sheet 3 = "Кемпінг"
 # sheet 4 = "Трансфер"
 # sheet 5 = "Альтанка"
 # sheet 6 = "ДР"
-# sheet 7 = "Табір "
-# sheet 8 = "СВ (літо)"
-# sheet 9 = "Опис програм"
+# sheet 7 = "Табір"
+# sheet 8 = "Опис програм"
 
 [files."info-msg-26.xlsx".sheets."ОП весна-літо"]
 # parser_profile = "outline_sheet"
@@ -24,7 +23,7 @@ forced_paragraph_rows = [4, 38, 40]
 [files."info-msg-26.xlsx".sheets."Опис програм"]
 # parser_profile = "outline_sheet"
 
-[files."info-msg-26.xlsx".sheets."СВ (КВІТЕНЬ-ТРАВЕНЬ)"]
+[files."info-msg-26.xlsx".sheets."СВ (ТРАВЕНЬ)"]
 # parser_profile = "outline_sheet"
 forced_header_rows = [3]
 forced_paragraph_rows = [5]
@@ -49,13 +48,9 @@ title = "Дні народження"
 ignore_rows = [20]
 forced_paragraph_rows = [2, 3, 4, 5, 7, 9, 10, 11, 13, 14, 23, 24, 26, 28, 30, 35, 37, 38]
 
-[files."info-msg-26.xlsx".sheets."Табір "]
+[files."info-msg-26.xlsx".sheets."Табір"]
 # parser_profile = "outline_sheet"
 forced_paragraph_rows = [1]
-
-[files."info-msg-26.xlsx".sheets."СВ (літо)"]
-# parser_profile = "outline_sheet"
-forced_paragraph_rows = [3, 4]
 
 [files."01-faq.csv"]
 # parser_profile = "qa_table"
