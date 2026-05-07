@@ -245,6 +245,43 @@ category = "offers"
     assert entry.logical_id == "spring-program"
 
 
+def test_xlsx_outline_sheet_title_override_keeps_first_header_as_section(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    config_path = tmp_path / "parser_config.toml"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Offers"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "Workbook Banner"
+    sheet["D1"] = "Side note"
+    sheet["A2"] = "Details."
+    _save_workbook(input_dir / "program.xlsx", workbook)
+
+    _write_text(
+        config_path,
+        """
+[files."program.xlsx".sheets."Offers"]
+parser_profile = "outline_sheet"
+title = "Configured Title"
+""".strip(),
+    )
+
+    result = parse_knowledge_base(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config_path=config_path,
+    )
+
+    assert result.success_count == 1
+    assert result.failure_count == 0
+    markdown = (output_dir / "markdown" / "program-offers.md").read_text(encoding="utf-8")
+    assert markdown == "# Configured Title\n\n## Workbook Banner\n\nSide note\n\nDetails.\n"
+
+
 def test_xlsx_outline_sheet_supports_multiple_content_regions_and_skips_hidden_sheets(
     tmp_path: Path,
 ) -> None:

@@ -114,15 +114,45 @@ Sync Markdown to OpenAI vector store:
 Use `--replace` when a source was removed, renamed, or materially changed so stale vector-store
 files are deleted.
 
-When adding new sources:
+When replacing or adding a brand-new XLSX file:
 
-1. Add the raw XLSX/CSV.
-2. Update `parser_config.toml`.
-3. Add or activate the direction/topic mapping in `taxonomy.toml`.
-4. Rebuild local KB.
-5. Sync vector store with `--replace`.
-6. Add/update eval cases in `tests/evals/qa_cases.yaml`.
-7. Test direction-sensitive questions manually.
+1. Put the workbook in `data/knowledge_base/raw_sources`. Raw workbooks are local/ignored files,
+   so do not rely on Git to preserve them.
+2. Inspect visible worksheet order and names before editing config. `sheet_indexes` use visible-tab
+   order, not Excel's hidden-sheet order.
+3. Update `data/knowledge_base/parser_config.toml`:
+   - set the workbook's `sheet_indexes`;
+   - add or update sheet-name comments for humans;
+   - add `title` when the Markdown H1 should be cleaner than the first cell;
+   - add `forced_header_rows` for short rows that must become headings;
+   - add `forced_paragraph_rows` for scripts, prose, table rows, or cells whose first line looks
+     like a heading but should stay body text;
+   - add `ignore_rows` for spreadsheet-only headers, helper rows, obsolete notes, or duplicate
+     table labels.
+4. Update `data/knowledge_base/taxonomy.toml` with one `[[sources]]` mapping per useful tab:
+   `source_file`, `sheet_name`, `direction_id`, `topic_ids`, and `period_label`.
+5. Rebuild local Markdown, manifest, and SQLite FTS5 index:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m app.services.knowledge_base.cli
+   ```
+
+6. Check `data/knowledge_base/processed/manifest.json` before syncing. It should contain all
+   expected tabs and `errors: []`.
+7. Inspect generated headings in `data/knowledge_base/processed/markdown`. The best search files
+   have one clear H1, meaningful H2/H3 sections, and no repeated table-label headings such as
+   `NAME`, `DESCRIPTION`, or `PRICE`.
+8. Run the local checks:
+
+   ```powershell
+   .\.venv\Scripts\ruff.exe check src tests
+   .\.venv\Scripts\pytest.exe -q
+   ```
+
+9. Sync vector store with `--replace` after the local Markdown is clean. Use `--replace` whenever a
+   source was removed, renamed, reordered, or materially changed.
+10. Add/update eval cases in `tests/evals/qa_cases.yaml`, then manually test
+    direction-sensitive questions.
 
 Current active directions:
 

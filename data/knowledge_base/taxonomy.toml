@@ -25,21 +25,21 @@ aliases = [
   "парк для сімей",
   "відпочинок сім'єю",
 ]
-source_categories = ["СВ (КВІТЕНЬ-ТРАВЕНЬ)"]
+source_categories = ["СВ (КВІТЕНЬ-ТРАВЕНЬ)", "СВ (літо)", "Альтанка", "Трансфер"]
 active = true
 
 [directions.camping]
 label_uk = "Кемпінг"
 short_label = "Кемпінг"
 aliases = ["кемпінг", "табір", "ночівля", "ночівку", "ночівлею", "camping"]
-source_categories = ["Кемпінг"]
+source_categories = ["Кемпінг", "Табір"]
 active = false
 
 [directions.birthdays]
 label_uk = "Дні народження"
 short_label = "ДН"
 aliases = ["ДН", "день народження", "дні народження", "святкування"]
-source_categories = ["ДН", "Дні народження"]
+source_categories = ["ДН", "ДР", "Дні народження"]
 active = false
 
 [directions.school_excursions]
@@ -149,3 +149,45 @@ sheet_name = "СВ (КВІТЕНЬ-ТРАВЕНЬ)"
 direction_id = "sv"
 topic_ids = ["tickets", "schedule", "services", "food", "rules", "location"]
 period_label = "квітень-травень 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "Кемпінг"
+direction_id = "camping"
+topic_ids = ["tickets", "schedule", "services", "food", "rules", "location"]
+period_label = "кемпінг 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "Трансфер"
+direction_id = "sv"
+topic_ids = ["transfer", "schedule", "rules", "location"]
+period_label = "трансфер 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "Альтанка"
+direction_id = "sv"
+topic_ids = ["tickets", "services", "food", "rules"]
+period_label = "альтанки 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "ДР"
+direction_id = "birthdays"
+topic_ids = ["programs", "tickets", "schedule", "services", "food", "rules", "contacts"]
+period_label = "дні народження 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "Табір"
+direction_id = "camping"
+topic_ids = ["tickets", "schedule", "services", "food", "rules"]
+period_label = "табір 2026"
+
+[[sources]]
+source_file = "info-msg-26.xlsx"
+sheet_name = "СВ (літо)"
+direction_id = "sv"
+topic_ids = ["tickets", "schedule", "services", "food", "rules", "location", "transfer"]
+period_label = "літо 2026"

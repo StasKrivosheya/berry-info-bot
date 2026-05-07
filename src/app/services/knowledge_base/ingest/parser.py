@@ -347,6 +347,7 @@ def _parse_xlsx_sheet(
             source_slug=source_slug,
             default_title=title,
             override=override,
+            explicit_title=override.title is not None,
         )
     else:
         prepared_table = build_table_from_sheet(sheet, override)
