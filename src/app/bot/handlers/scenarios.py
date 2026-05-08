@@ -49,6 +49,25 @@ LOG_EVENT_KB_ANSWERED = "bot_kb_answered"
 TELEGRAM_TYPING_REFRESH_SECONDS = 4.0
 
 
+class SearchAnswerText(str):
+    """Answer text with lightweight routing context metadata attached."""
+
+    answer_state: str
+    accepted_candidate_ids: tuple[str, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        answer_state: str,
+        accepted_candidate_ids: tuple[str, ...],
+    ) -> SearchAnswerText:
+        obj = str.__new__(cls, value)
+        obj.answer_state = answer_state
+        obj.accepted_candidate_ids = accepted_candidate_ids
+        return obj
+
+
 @router.message(CommandStart())
 @router.message(Command("menu"))
 async def show_main_menu(message: Message) -> None:
@@ -232,7 +251,14 @@ async def unknown_text_handler(message: Message) -> None:
         if routing_result.route is not None and routing_result.route.route == "menu_help":
             text = MENU_MESSAGE_TEXT
         elif routing_result.should_search and routing_result.route is not None:
-            text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
+            answer_text = await asyncio.to_thread(_answer_searchable_route, routing_result.route)
+            if isinstance(answer_text, SearchAnswerText):
+                _create_query_context_store().update_last_answer(
+                    QueryContextKey(chat_id=message.chat.id, user_id=message.from_user.id),
+                    answer_state=answer_text.answer_state,
+                    accepted_candidate_ids=answer_text.accepted_candidate_ids,
+                )
+            text = str(answer_text)
         else:
             text = routing_result.response_text
 
@@ -326,34 +352,52 @@ def _answer_searchable_route(route) -> str:
     vector_count = 0
     lexical_count = 0
     answer_result = fallback_answer()
+    top_candidate_ids = ""
     try:
         search_result = _create_hybrid_search_service().search(route)
         vector_count = search_result.vector_result_count
         lexical_count = search_result.lexical_result_count
+        top_candidate_ids = ",".join(
+            candidate.candidate_id for candidate in search_result.candidates[:5]
+        )
         answer_result = _create_answer_generator().answer(
             route=route,
             candidates=search_result.candidates,
         )
-        return answer_result.answer_text
+        return SearchAnswerText(
+            answer_result.answer_text,
+            answer_state=answer_result.answer_state,
+            accepted_candidate_ids=answer_result.accepted_candidate_ids,
+        )
     except Exception:
         logger.warning("bot_kb_answer_failed", exc_info=True)
-        return FIXED_NOT_FOUND_FALLBACK
+        return SearchAnswerText(
+            FIXED_NOT_FOUND_FALLBACK,
+            answer_state="not_found",
+            accepted_candidate_ids=(),
+        )
     finally:
         elapsed_ms = round((time.perf_counter() - started_at) * 1000)
         logger.info(
             (
-                "%s route=%s topic_hint=%s direction_hints=%s canonical_question=%r "
+                "%s route=%s query_specificity=%s question_scope=%s topic_hint=%s "
+                "direction_hints=%s clarification_reason=%s canonical_question=%r "
                 "vector_candidate_count=%s "
-                "lexical_candidate_count=%s accepted_candidate_ids=%s answer_state=%s "
+                "lexical_candidate_count=%s top_candidate_ids=%s "
+                "accepted_candidate_ids=%s answer_state=%s "
                 "elapsed_ms=%s"
             ),
             LOG_EVENT_KB_ANSWERED,
             route.route,
+            route.query_specificity,
+            route.question_scope,
             route.topic_hint,
             ",".join(route.direction_hints),
+            route.clarification_reason,
             route.canonical_question_uk,
             vector_count,
             lexical_count,
+            top_candidate_ids,
             ",".join(answer_result.accepted_candidate_ids),
             answer_result.answer_state,
             elapsed_ms,

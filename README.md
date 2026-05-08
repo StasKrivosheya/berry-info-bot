@@ -152,7 +152,7 @@ When replacing or adding a brand-new XLSX file:
 9. Sync vector store with `--replace` after the local Markdown is clean. Use `--replace` whenever a
    source was removed, renamed, reordered, or materially changed.
 10. Add/update eval cases in `tests/evals/qa_cases.yaml`, then manually test
-    direction-sensitive questions.
+    concrete broad questions and direction-required questions.
 
 Current active directions:
 
@@ -169,15 +169,17 @@ Future inactive directions are already named in taxonomy: `camping`, `birthdays`
 - User writes a greeting or smalltalk: bot returns short service text.
 - User asks a KB question: bot routes, searches, and answers only from evidence.
 - User asks about price/schedule/transfer without a direction: bot asks which direction to use.
+- User asks a concrete park-wide question without a controlled topic: bot searches broadly.
 - User asks something absent from KB: bot returns the fixed not-found fallback.
 
 ## RAG Flow
 
 1. Commands, callbacks, and exact menu labels are handled without LLM.
 2. Normal free text goes to one structured routing/canonicalization call.
-3. Router returns route, Ukrainian canonical question, vector query, lexical terms, `topic_hint`,
-   `direction_hints`, and optional `target_date`.
-4. Hybrid search runs broad vector and local lexical retrieval.
+3. Router returns route, Ukrainian canonical question, vector query, lexical terms, specificity,
+   scope, `topic_hint`, `direction_hints`, and optional `target_date`.
+4. Hybrid search runs broad vector and local lexical retrieval with an inflection-tolerant local
+   fallback when exact lexical search misses.
 5. `topic_hint` and `direction_hints` are ranking boosts, not hard filters.
 6. Candidate IDs are deduplicated and bounded.
 7. Answer model receives candidates as untrusted data.
@@ -191,7 +193,8 @@ Future inactive directions are already named in taxonomy: `camping`, `birthdays`
 
 - No visible citations in Telegram answers yet.
 - No automatic KB rebuild on startup.
-- Direction/date ambiguity is intentionally conservative.
+- Direction/date ambiguity is configured per topic and intentionally conservative for price,
+  schedule, and transfer questions.
 - Answer quality depends on KB source freshness and vector-store sync.
 
 ## Runtime Cost Controls

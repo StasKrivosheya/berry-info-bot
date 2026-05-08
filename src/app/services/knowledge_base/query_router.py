@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -8,7 +10,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.config import OpenAIReasoningEffort
-from app.services.knowledge_base.taxonomy import get_default_taxonomy
+from app.services.knowledge_base.taxonomy import GENERAL_TOPIC_ID, get_default_taxonomy
 
 # ruff: noqa: RUF001
 
@@ -21,6 +23,9 @@ QueryRouteName = Literal[
     "unsupported",
 ]
 ClarificationKind = Literal["topic", "direction"]
+QuerySpecificity = Literal["vague", "concrete"]
+QuestionScope = Literal["unknown", "broad", "direction_specific"]
+ResponseKind = Literal["service", "menu", "clarification", "search", "fallback"]
 
 MAX_MESSAGE_LENGTH = 1000
 MAX_QUERY_LENGTH = 500
@@ -28,7 +33,13 @@ MAX_LIST_ITEM_LENGTH = 80
 MAX_LIST_ITEMS = 8
 MAX_OUTPUT_TOKENS = 500
 DEFAULT_CONTEXT_TTL_SECONDS = 15 * 60
+MAX_CONTEXT_TURNS = 4
 MAX_DETERMINISTIC_FOLLOW_UP_WORDS = 7
+MAX_CLARIFICATION_REPLY_WORDS = 5
+
+TOKEN_RE = re.compile(r"[\w'’]+", re.UNICODE)
+
+logger = logging.getLogger(__name__)
 
 SERVICE_FALLBACK_TEXT = (
     "Я віртуальний менеджер Berry Land. Скористайтеся кнопками меню або напишіть "
@@ -59,10 +70,18 @@ Rules:
   explicitly asks about multiple directions.
 - topic_hint is the question topic: tickets/schedule/programs/transfer/food/etc.
 - target_date is a concise date/month/season from the user message when present.
-- If the user asks about price, schedule, transfer, food, services, or rules without a
-  direction, leave direction_hints empty; the app will ask a deterministic clarification.
+- query_specificity is "concrete" for a specific fact, object, amenity, rule, service,
+  availability, schedule, or price question; use "vague" only for generic requests like
+  "tell me more" or "I want information".
+- question_scope is "direction_specific" when the user names OP/SV/etc.; "broad" when
+  they ask about the park overall or all directions; otherwise "unknown".
+- If a concrete KB question has no controlled topic, keep topic_hint null and search
+  broadly. Do not ask topic clarification for concrete entity/amenity questions.
+- Direction clarification is deterministic and configured per topic. When no direction is
+  mentioned, leave direction_hints empty; the app decides whether clarification is needed.
 - Never invent category names.
-- Translate Russian/English user questions into concise Ukrainian canonical/vector queries.
+- Translate Russian/English user questions into concise Ukrainian canonical/vector queries
+  and Ukrainian lexical terms. Keep the original user wording only as supporting search text.
 - Use previous context only for a short follow_up; set use_context=true when used.
 - If follow_up has no useful context, leave query fields empty and ask for clarification later.
 - Do not answer the user and do not reveal reasoning.
@@ -93,6 +112,9 @@ class QueryRoute(BaseModel):
     target_date: str | None = Field(default=None, max_length=80)
     category_hint: str | None = Field(default=None, max_length=80)
     logical_id_hint: str | None = Field(default=None, max_length=120)
+    query_specificity: QuerySpecificity = "concrete"
+    question_scope: QuestionScope = "unknown"
+    clarification_reason: str | None = Field(default=None, max_length=160)
     confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator(
@@ -103,6 +125,7 @@ class QueryRoute(BaseModel):
         "target_date",
         "category_hint",
         "logical_id_hint",
+        "clarification_reason",
         mode="before",
     )
     @classmethod
@@ -141,6 +164,20 @@ class QueryContextKey:
 
 
 @dataclass(frozen=True, slots=True)
+class QueryTurn:
+    user_message: str
+    route_name: QueryRouteName | None
+    query_specificity: QuerySpecificity | None
+    question_scope: QuestionScope | None
+    topic_hint: str | None
+    direction_hints: tuple[str, ...]
+    response_kind: ResponseKind
+    clarification_kind: ClarificationKind | None = None
+    answer_state: str | None = None
+    accepted_candidate_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class QueryContext:
     original_message: str
     canonical_question_uk: str
@@ -152,7 +189,11 @@ class QueryContext:
     target_date: str | None
     category_hint: str | None
     logical_id_hint: str | None
+    query_specificity: QuerySpecificity
+    question_scope: QuestionScope
+    clarification_reason: str | None = None
     pending_clarification: ClarificationKind | None = None
+    history: tuple[QueryTurn, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,25 +241,114 @@ class QueryContextStore:
         *,
         pending_clarification: ClarificationKind | None = None,
     ) -> None:
-        if route.route not in {"kb_query", "follow_up"}:
-            return
-        if not route.canonical_question_uk or not route.vector_query_uk:
-            return
+        self.save_turn(
+            key,
+            route=route,
+            message=route.original_message,
+            response_kind="clarification" if pending_clarification else "search",
+            pending_clarification=pending_clarification,
+            clarification_kind=pending_clarification,
+        )
+
+    def save_turn(
+        self,
+        key: QueryContextKey,
+        *,
+        route: QueryRoute | None,
+        message: str,
+        response_kind: ResponseKind,
+        pending_clarification: ClarificationKind | None = None,
+        clarification_kind: ClarificationKind | None = None,
+        answer_state: str | None = None,
+        accepted_candidate_ids: tuple[str, ...] = (),
+    ) -> None:
+        previous = self.get(key)
+        context_values = _context_values_from_route(route)
+        if context_values is None and previous is not None:
+            context_values = _context_values_from_context(previous)
+        if context_values is None:
+            context_values = {
+                "original_message": message.strip(),
+                "canonical_question_uk": "",
+                "vector_query_uk": "",
+                "lexical_keywords": (),
+                "lexical_phrases": (),
+                "topic_hint": None,
+                "direction_hints": (),
+                "target_date": None,
+                "category_hint": None,
+                "logical_id_hint": None,
+                "query_specificity": "vague",
+                "question_scope": "unknown",
+                "clarification_reason": None,
+            }
+
+        history = _append_context_turn(
+            previous.history if previous is not None else (),
+            QueryTurn(
+                user_message=message.strip(),
+                route_name=route.route if route is not None else None,
+                query_specificity=route.query_specificity if route is not None else None,
+                question_scope=route.question_scope if route is not None else None,
+                topic_hint=route.topic_hint if route is not None else None,
+                direction_hints=tuple(route.direction_hints) if route is not None else (),
+                response_kind=response_kind,
+                clarification_kind=clarification_kind,
+                answer_state=answer_state,
+                accepted_candidate_ids=accepted_candidate_ids,
+            ),
+        )
 
         self._items[key] = (
             self._monotonic(),
             QueryContext(
-                original_message=route.original_message,
-                canonical_question_uk=route.canonical_question_uk,
-                vector_query_uk=route.vector_query_uk,
-                lexical_keywords=tuple(route.lexical_keywords),
-                lexical_phrases=tuple(route.lexical_phrases),
-                topic_hint=route.topic_hint,
-                direction_hints=tuple(route.direction_hints),
-                target_date=route.target_date,
-                category_hint=route.category_hint,
-                logical_id_hint=route.logical_id_hint,
+                **context_values,
                 pending_clarification=pending_clarification,
+                history=history,
+            ),
+        )
+
+    def update_last_answer(
+        self,
+        key: QueryContextKey,
+        *,
+        answer_state: str,
+        accepted_candidate_ids: tuple[str, ...],
+    ) -> None:
+        context = self.get(key)
+        if context is None or not context.history:
+            return
+        last_turn = context.history[-1]
+        updated_turn = QueryTurn(
+            user_message=last_turn.user_message,
+            route_name=last_turn.route_name,
+            query_specificity=last_turn.query_specificity,
+            question_scope=last_turn.question_scope,
+            topic_hint=last_turn.topic_hint,
+            direction_hints=last_turn.direction_hints,
+            response_kind=last_turn.response_kind,
+            clarification_kind=last_turn.clarification_kind,
+            answer_state=answer_state,
+            accepted_candidate_ids=accepted_candidate_ids,
+        )
+        self._items[key] = (
+            self._monotonic(),
+            QueryContext(
+                original_message=context.original_message,
+                canonical_question_uk=context.canonical_question_uk,
+                vector_query_uk=context.vector_query_uk,
+                lexical_keywords=context.lexical_keywords,
+                lexical_phrases=context.lexical_phrases,
+                topic_hint=context.topic_hint,
+                direction_hints=context.direction_hints,
+                target_date=context.target_date,
+                category_hint=context.category_hint,
+                logical_id_hint=context.logical_id_hint,
+                query_specificity=context.query_specificity,
+                question_scope=context.question_scope,
+                clarification_reason=context.clarification_reason,
+                pending_clarification=context.pending_clarification,
+                history=(*context.history[:-1], updated_turn),
             ),
         )
 
@@ -263,11 +393,25 @@ class OpenAIQueryRouter:
 def build_query_router_input(message: str, *, context: QueryContext | None) -> str:
     context_lines = ["Previous context: none"]
     if context is not None:
+        turn_lines = ["- none"]
+        if context.history:
+            turn_lines = [
+                (
+                    f"- user_message={turn.user_message}; route={turn.route_name or '(none)'}; "
+                    f"response_kind={turn.response_kind}; "
+                    f"topic_hint={turn.topic_hint or '(none)'}; "
+                    f"direction_hints={', '.join(turn.direction_hints) or '(none)'}; "
+                    f"clarification_kind={turn.clarification_kind or '(none)'}; "
+                    f"answer_state={turn.answer_state or '(none)'}; "
+                    f"accepted_candidate_ids={', '.join(turn.accepted_candidate_ids) or '(none)'}"
+                )
+                for turn in context.history
+            ]
         context_lines = [
             "Previous context:",
             f"- original_message: {context.original_message}",
-            f"- canonical_question_uk: {context.canonical_question_uk}",
-            f"- vector_query_uk: {context.vector_query_uk}",
+            f"- canonical_question_uk: {context.canonical_question_uk or '(none)'}",
+            f"- vector_query_uk: {context.vector_query_uk or '(none)'}",
             f"- lexical_keywords: {', '.join(context.lexical_keywords) or '(none)'}",
             f"- lexical_phrases: {', '.join(context.lexical_phrases) or '(none)'}",
             f"- topic_hint: {context.topic_hint or '(none)'}",
@@ -275,7 +419,12 @@ def build_query_router_input(message: str, *, context: QueryContext | None) -> s
             f"- target_date: {context.target_date or '(none)'}",
             f"- category_hint: {context.category_hint or '(none)'}",
             f"- logical_id_hint: {context.logical_id_hint or '(none)'}",
+            f"- query_specificity: {context.query_specificity}",
+            f"- question_scope: {context.question_scope}",
+            f"- clarification_reason: {context.clarification_reason or '(none)'}",
             f"- pending_clarification: {context.pending_clarification or '(none)'}",
+            "Recent turns:",
+            *turn_lines,
         ]
     return "\n".join(
         (
@@ -301,6 +450,7 @@ def route_free_text_message(
             context_store=context_store,
             context_key=context_key,
             used_context=True,
+            message=message,
         )
 
     try:
@@ -313,7 +463,14 @@ def route_free_text_message(
                 context_store=context_store,
                 context_key=context_key,
                 used_context=True,
+                message=message,
             )
+        context_store.save_turn(
+            context_key,
+            route=None,
+            message=message,
+            response_kind="fallback",
+        )
         return QueryRoutingResult(
             route=None,
             response_text=SERVICE_FALLBACK_TEXT,
@@ -321,12 +478,14 @@ def route_free_text_message(
         )
     route = normalize_route_taxonomy(route, context=context)
     route = promote_contextual_short_follow_up(route, message=message, context=context)
+    route = rescue_likely_kb_query(route, message=message)
 
     return build_routing_result(
         route=route,
         context_store=context_store,
         context_key=context_key,
         used_context=route.use_context,
+        message=message,
     )
 
 
@@ -336,8 +495,15 @@ def build_routing_result(
     context_store: QueryContextStore,
     context_key: QueryContextKey,
     used_context: bool,
+    message: str,
 ) -> QueryRoutingResult:
     if route.route == "menu_help":
+        context_store.save_turn(
+            context_key,
+            route=route,
+            message=message,
+            response_kind="menu",
+        )
         return QueryRoutingResult(
             route=route,
             response_text="",
@@ -346,6 +512,13 @@ def build_routing_result(
         )
 
     if route.route == "follow_up" and not route.use_context:
+        context_store.save_turn(
+            context_key,
+            route=route,
+            message=message,
+            response_kind="clarification",
+            clarification_kind="direction",
+        )
         return QueryRoutingResult(
             route=route,
             response_text=FOLLOW_UP_CLARIFICATION_TEXT,
@@ -355,8 +528,24 @@ def build_routing_result(
 
     if route.route in {"kb_query", "follow_up"}:
         taxonomy = get_default_taxonomy()
-        if taxonomy.should_clarify_topic(topic_id=route.topic_hint):
-            context_store.save(context_key, route, pending_clarification="topic")
+        if taxonomy.should_clarify_topic(
+            topic_id=route.topic_hint,
+            query_specificity=route.query_specificity,
+        ):
+            route = route.model_copy(
+                update={
+                    "clarification_reason": route.clarification_reason
+                    or "topic_unclear_for_vague_query",
+                },
+            )
+            context_store.save_turn(
+                context_key,
+                route=route,
+                message=message,
+                response_kind="clarification",
+                pending_clarification="topic",
+                clarification_kind="topic",
+            )
             return QueryRoutingResult(
                 route=route,
                 response_text=taxonomy.build_topic_clarification_text(),
@@ -368,7 +557,20 @@ def build_routing_result(
             topic_id=route.topic_hint,
             direction_ids=tuple(route.direction_hints),
         ):
-            context_store.save(context_key, route, pending_clarification="direction")
+            route = route.model_copy(
+                update={
+                    "clarification_reason": route.clarification_reason
+                    or "direction_required_for_topic",
+                },
+            )
+            context_store.save_turn(
+                context_key,
+                route=route,
+                message=message,
+                response_kind="clarification",
+                pending_clarification="direction",
+                clarification_kind="direction",
+            )
             return QueryRoutingResult(
                 route=route,
                 response_text=taxonomy.build_direction_clarification_text(route.topic_hint),
@@ -376,7 +578,12 @@ def build_routing_result(
                 used_context=used_context,
                 clarification_kind="direction",
             )
-        context_store.save(context_key, route)
+        context_store.save_turn(
+            context_key,
+            route=route,
+            message=message,
+            response_kind="search",
+        )
         return QueryRoutingResult(
             route=route,
             response_text=SERVICE_FALLBACK_TEXT,
@@ -384,6 +591,12 @@ def build_routing_result(
             used_context=used_context,
         )
 
+    context_store.save_turn(
+        context_key,
+        route=route,
+        message=message,
+        response_kind="service",
+    )
     return QueryRoutingResult(
         route=route,
         response_text=SERVICE_FALLBACK_TEXT,
@@ -398,6 +611,8 @@ def resolve_pending_clarification_message(
     context: QueryContext | None,
 ) -> QueryRoute | None:
     if context is None or context.pending_clarification is None:
+        return None
+    if not _is_option_like_clarification_reply(message):
         return None
 
     taxonomy = get_default_taxonomy()
@@ -432,6 +647,8 @@ def resolve_contextual_short_follow_up(
         return None
     if len(message.strip().split()) > MAX_DETERMINISTIC_FOLLOW_UP_WORDS:
         return None
+    if not context.vector_query_uk or not _looks_like_short_follow_up(message):
+        return None
 
     taxonomy = get_default_taxonomy()
     topic_ids = taxonomy.infer_topic_ids_from_text(message)
@@ -456,6 +673,8 @@ def promote_contextual_short_follow_up(
     if context is None or context.pending_clarification is not None:
         return route
     if route.use_context or len(message.strip().split()) > MAX_DETERMINISTIC_FOLLOW_UP_WORDS:
+        return route
+    if not _looks_like_short_follow_up(message):
         return route
     if route.route not in {"greeting", "smalltalk", "unsupported", "follow_up"}:
         return route
@@ -517,6 +736,9 @@ def build_contextual_route(
         target_date=context.target_date,
         category_hint=context.category_hint,
         logical_id_hint=context.logical_id_hint,
+        query_specificity="concrete",
+        question_scope="direction_specific" if normalized_direction_ids else "broad",
+        clarification_reason="contextual_short_follow_up",
         confidence=0.85,
     )
 
@@ -545,6 +767,8 @@ def normalize_route_taxonomy(
     if topic_hint is None:
         inferred_topics = taxonomy.infer_topic_ids_from_text(route_text)
         topic_hint = inferred_topics[0] if inferred_topics else None
+    if topic_hint == GENERAL_TOPIC_ID and route.query_specificity == "concrete":
+        topic_hint = None
     if topic_hint is None and route.use_context and context is not None:
         topic_hint = context.topic_hint
 
@@ -559,6 +783,12 @@ def normalize_route_taxonomy(
         if context.direction_hints:
             direction_ids = context.direction_hints
 
+    question_scope = route.question_scope
+    if direction_ids:
+        question_scope = "direction_specific"
+    elif route.route in {"kb_query", "follow_up"} and question_scope == "unknown":
+        question_scope = "broad"
+
     target_date = route.target_date
     if target_date is None and route.use_context and context is not None:
         target_date = context.target_date
@@ -567,9 +797,220 @@ def normalize_route_taxonomy(
         update={
             "topic_hint": topic_hint,
             "direction_hints": list(direction_ids),
+            "question_scope": question_scope,
             "target_date": target_date,
         }
     )
+
+
+def rescue_likely_kb_query(route: QueryRoute, *, message: str) -> QueryRoute:
+    if route.route not in {"smalltalk", "unsupported"}:
+        return route
+    if not _looks_like_kb_query(message):
+        return route
+
+    original_message = message.strip() or route.original_message
+    lexical_keywords = _extract_lexical_terms(original_message)
+    vector_query = _join_non_empty(route.vector_query_uk or original_message, "Berry Land")
+    logger.info(
+        "kb_query_route_rescued original_route=%s message=%r",
+        route.route,
+        original_message,
+    )
+    return QueryRoute(
+        route="kb_query",
+        original_message=original_message,
+        canonical_question_uk=route.canonical_question_uk or original_message,
+        vector_query_uk=vector_query,
+        lexical_keywords=list(lexical_keywords or ("Berry Land",)),
+        lexical_phrases=list(
+            normalize_unique_texts((original_message, route.canonical_question_uk or vector_query)),
+        ),
+        topic_hint=route.topic_hint,
+        direction_hints=route.direction_hints,
+        target_date=route.target_date,
+        category_hint=route.category_hint,
+        logical_id_hint=route.logical_id_hint,
+        query_specificity="concrete",
+        question_scope="direction_specific" if route.direction_hints else "broad",
+        clarification_reason="deterministic_kb_rescue",
+        confidence=min(route.confidence, 0.55),
+    )
+
+
+def _context_values_from_route(route: QueryRoute | None) -> dict[str, object] | None:
+    if route is None or route.route not in {"kb_query", "follow_up"}:
+        return None
+    if not route.canonical_question_uk or not route.vector_query_uk:
+        return None
+    return {
+        "original_message": route.original_message,
+        "canonical_question_uk": route.canonical_question_uk,
+        "vector_query_uk": route.vector_query_uk,
+        "lexical_keywords": tuple(route.lexical_keywords),
+        "lexical_phrases": tuple(route.lexical_phrases),
+        "topic_hint": route.topic_hint,
+        "direction_hints": tuple(route.direction_hints),
+        "target_date": route.target_date,
+        "category_hint": route.category_hint,
+        "logical_id_hint": route.logical_id_hint,
+        "query_specificity": route.query_specificity,
+        "question_scope": route.question_scope,
+        "clarification_reason": route.clarification_reason,
+    }
+
+
+def _context_values_from_context(context: QueryContext) -> dict[str, object]:
+    return {
+        "original_message": context.original_message,
+        "canonical_question_uk": context.canonical_question_uk,
+        "vector_query_uk": context.vector_query_uk,
+        "lexical_keywords": context.lexical_keywords,
+        "lexical_phrases": context.lexical_phrases,
+        "topic_hint": context.topic_hint,
+        "direction_hints": context.direction_hints,
+        "target_date": context.target_date,
+        "category_hint": context.category_hint,
+        "logical_id_hint": context.logical_id_hint,
+        "query_specificity": context.query_specificity,
+        "question_scope": context.question_scope,
+        "clarification_reason": context.clarification_reason,
+    }
+
+
+def _append_context_turn(
+    history: tuple[QueryTurn, ...],
+    turn: QueryTurn,
+) -> tuple[QueryTurn, ...]:
+    return (*history, turn)[-MAX_CONTEXT_TURNS:]
+
+
+def _is_option_like_clarification_reply(message: str) -> bool:
+    stripped = message.strip()
+    if not stripped or "\n" in stripped:
+        return False
+    word_count = len(stripped.split())
+    if word_count > MAX_CLARIFICATION_REPLY_WORDS:
+        return False
+    if "?" in stripped and word_count > 2:
+        return False
+    return True
+
+
+def _looks_like_short_follow_up(message: str) -> bool:
+    stripped = message.strip()
+    if not stripped:
+        return False
+    taxonomy = get_default_taxonomy()
+    if taxonomy.infer_direction_ids_from_text(stripped):
+        return True
+    normalized = stripped.casefold()
+    return (
+        "?" in stripped
+        or normalized.startswith(("а ", "і ", "и ", "а?", "і?", "и?"))
+        or normalized in {"а", "і", "и"}
+    )
+
+
+def _looks_like_kb_query(message: str) -> bool:
+    normalized = message.strip().casefold()
+    if not normalized:
+        return False
+    domain_terms = (
+        "berry",
+        "land",
+        "парк",
+        "парку",
+        "парке",
+        "парка",
+        "квит",
+        "білет",
+        "билет",
+        "ціна",
+        "цена",
+        "граф",
+        "розклад",
+        "распис",
+        "трансфер",
+        "послуг",
+        "услуг",
+        "програм",
+        "харч",
+        "еда",
+        "їжа",
+        "локац",
+        "адрес",
+        "можна",
+        "можно",
+        "ticket",
+        "price",
+        "schedule",
+        "transfer",
+        "service",
+        "program",
+        "food",
+        "where",
+        "what",
+        "available",
+    )
+    if any(term in normalized for term in domain_terms):
+        return True
+    return "?" in normalized and not _looks_like_social_message(normalized)
+
+
+def _looks_like_social_message(normalized: str) -> bool:
+    social_terms = (
+        "привіт",
+        "вітаю",
+        "здравствуйте",
+        "добрый день",
+        "дякую",
+        "спасибо",
+        "как дела",
+        "як справи",
+        "hello",
+        "hi",
+        "thanks",
+    )
+    return any(term in normalized for term in social_terms)
+
+
+def _extract_lexical_terms(message: str) -> tuple[str, ...]:
+    stopwords = {
+        "the",
+        "and",
+        "what",
+        "where",
+        "how",
+        "berry",
+        "land",
+        "парк",
+        "парку",
+        "парке",
+        "парка",
+        "are",
+        "есть",
+        "какие",
+        "какой",
+        "які",
+        "який",
+        "що",
+        "что",
+        "для",
+        "про",
+        "мене",
+        "вас",
+    }
+    values: list[str] = []
+    for match in TOKEN_RE.finditer(message):
+        token = match.group(0).strip("'’").casefold()
+        if len(token) < 3 or token in stopwords:
+            continue
+        if token not in values:
+            values.append(token)
+        if len(values) >= MAX_LIST_ITEMS:
+            break
+    return tuple(values)
 
 
 def _direction_text(direction_ids: tuple[str, ...]) -> str:

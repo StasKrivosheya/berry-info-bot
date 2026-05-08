@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,9 +13,82 @@ from app.services.knowledge_base.retrieval.candidates import (
     build_candidates_from_manifest,
 )
 
+# ruff: noqa: RUF001
+
 DEFAULT_LEXICAL_INDEX_PATH = Path("data/knowledge_base/processed/kb_lexical.sqlite3")
 DEFAULT_LEXICAL_MAX_RESULTS = 6
 LOG_EVENT_LEXICAL_INDEX_REBUILT = "kb_lexical_index_rebuilt"
+MAX_PREFIX_TERMS = 16
+MIN_PREFIX_LENGTH = 4
+TOKEN_RE = re.compile(r"[\w'’]+", re.UNICODE)
+_PREFIX_STOPWORDS = {
+    "berry",
+    "land",
+    "what",
+    "where",
+    "when",
+    "how",
+    "парк",
+    "парку",
+    "парке",
+    "парка",
+    "the",
+    "and",
+    "для",
+    "про",
+    "які",
+    "який",
+    "яка",
+    "що",
+    "яке",
+    "есть",
+    "какие",
+    "какой",
+    "что",
+}
+_INFLECTION_SUFFIXES = (
+    "ами",
+    "ями",
+    "ого",
+    "ему",
+    "ому",
+    "ыми",
+    "ими",
+    "ими",
+    "их",
+    "ых",
+    "ые",
+    "ое",
+    "ий",
+    "ый",
+    "ой",
+    "ая",
+    "яя",
+    "ею",
+    "ою",
+    "ів",
+    "ов",
+    "ей",
+    "ах",
+    "ях",
+    "ам",
+    "ям",
+    "ом",
+    "ем",
+    "ою",
+    "ею",
+    "ки",
+    "ок",
+    "и",
+    "і",
+    "а",
+    "я",
+    "е",
+    "о",
+    "у",
+    "ю",
+    "ь",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +171,35 @@ class SQLiteLexicalIndex:
         if not match_query or not self._index_path.exists():
             return ()
 
+        rows = self._search_rows(
+            match_query=match_query,
+            max_results=max_results,
+            category_hint=category_hint,
+            logical_id_hint=logical_id_hint,
+        )
+        if rows:
+            return tuple(_hit_from_row(row) for row in rows)
+
+        prefix_query = build_prefix_fts_query(keywords=keywords, phrases=phrases, query=query)
+        if not prefix_query or prefix_query == match_query:
+            return ()
+        rows = self._search_rows(
+            match_query=prefix_query,
+            max_results=max_results,
+            category_hint=category_hint,
+            logical_id_hint=logical_id_hint,
+        )
+
+        return tuple(_hit_from_row(row) for row in rows)
+
+    def _search_rows(
+        self,
+        *,
+        match_query: str,
+        max_results: int,
+        category_hint: str | None,
+        logical_id_hint: str | None,
+    ) -> list[sqlite3.Row]:
         clauses = ["kb_fts MATCH ?"]
         params: list[object] = [match_query]
         if category_hint:
@@ -113,9 +216,7 @@ class SQLiteLexicalIndex:
                 clauses=clauses,
                 columns=_table_columns(connection),
             )
-            rows = connection.execute(sql, params).fetchall()
-
-        return tuple(_hit_from_row(row) for row in rows)
+            return list(connection.execute(sql, params).fetchall())
 
 
 def build_lexical_index_from_manifest(
@@ -150,6 +251,23 @@ def build_fts_query(
         if normalized_query:
             terms.append(_quote_fts_phrase(normalized_query))
     return " OR ".join(dict.fromkeys(terms))
+
+
+def build_prefix_fts_query(
+    *,
+    keywords: tuple[str, ...] = (),
+    phrases: tuple[str, ...] = (),
+    query: str | None = None,
+) -> str:
+    terms: list[str] = []
+    values = (*phrases, *keywords, query or "")
+    for value in values:
+        for token in _prefix_tokens(str(value)):
+            if token not in terms:
+                terms.append(token)
+            if len(terms) >= MAX_PREFIX_TERMS:
+                return " OR ".join(terms)
+    return " OR ".join(terms)
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -229,6 +347,33 @@ def _hit_from_row(row: sqlite3.Row) -> LexicalSearchHit:
 
 def _quote_fts_phrase(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _prefix_tokens(value: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for match in TOKEN_RE.finditer(value.casefold()):
+        token = match.group(0).strip("'’_")
+        prefix = _prefix_for_token(token)
+        if prefix and prefix not in tokens:
+            tokens.append(prefix)
+    return tuple(tokens)
+
+
+def _prefix_for_token(token: str) -> str | None:
+    if len(token) < MIN_PREFIX_LENGTH or token in _PREFIX_STOPWORDS:
+        return None
+
+    for suffix in _INFLECTION_SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= MIN_PREFIX_LENGTH:
+            return f"{_escape_prefix_token(token[:-len(suffix)])}*"
+
+    if len(token) >= MIN_PREFIX_LENGTH + 2:
+        return f"{_escape_prefix_token(token[:-1])}*"
+    return f"{_escape_prefix_token(token)}*"
+
+
+def _escape_prefix_token(token: str) -> str:
+    return "".join(char for char in token if char.isalnum() or char == "_")
 
 
 def _build_search_sql(

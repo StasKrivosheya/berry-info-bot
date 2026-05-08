@@ -23,6 +23,7 @@ def write_tiny_manifest(tmp_path: Path) -> Path:
                 "",
                 "## Програма пригод",
                 "Квест, поні-ферма та активності для дітей.",
+                "Екскурсія к животным проходить у визначений час.",  # noqa: RUF001
                 "",
                 "## Трансфер",
                 "Трансфер з Дніпра оплачується окремо.",
@@ -112,6 +113,17 @@ def test_sqlite_lexical_index_returns_empty_for_no_results(tmp_path: Path) -> No
     hits = SQLiteLexicalIndex(index_path).search(keywords=("аквапарк",), max_results=5)
 
     assert hits == ()
+
+
+def test_sqlite_lexical_index_prefix_fallback_handles_inflected_terms(tmp_path: Path) -> None:
+    manifest_path = write_tiny_manifest(tmp_path)
+    index_path = tmp_path / "kb.sqlite3"
+    build_lexical_index_from_manifest(manifest_path, index_path=index_path)
+
+    hits = SQLiteLexicalIndex(index_path).search(keywords=("животные",), max_results=5)
+
+    assert len(hits) == 1
+    assert "животным" in hits[0].candidate.content
 
 
 def test_default_lexical_result_budget_is_six() -> None:

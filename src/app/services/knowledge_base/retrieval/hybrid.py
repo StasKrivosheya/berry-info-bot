@@ -24,6 +24,14 @@ HybridSource = Literal["vector", "lexical", "both"]
 DEFAULT_HYBRID_MAX_CANDIDATES = 10
 
 logger = logging.getLogger(__name__)
+_LEXICAL_TOKEN_STOPWORDS = {
+    "berry",
+    "land",
+    "парк",
+    "парку",
+    "парке",
+    "парка",
+}
 
 
 class VectorSearchService(Protocol):
@@ -92,9 +100,9 @@ class HybridSearchService:
             attribute_filters=None,
         )
         lexical_hits = self._lexical_index.search(
-            keywords=tuple(route.lexical_keywords),
-            phrases=tuple(route.lexical_phrases),
-            query=route.vector_query_uk,
+            keywords=_route_lexical_keywords(route),
+            phrases=_route_lexical_phrases(route),
+            query=_route_lexical_query(route),
             max_results=max(DEFAULT_LEXICAL_MAX_RESULTS, self._max_candidates),
             category_hint=None,
             logical_id_hint=None,
@@ -320,3 +328,62 @@ def _merge_topic_ids(
 def _split_csv_tuple(value: object) -> tuple[str, ...]:
     raw = str(value or "")
     return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _route_lexical_keywords(route: QueryRoute) -> tuple[str, ...]:
+    values: list[str] = []
+    for value in route.lexical_keywords:
+        _append_unique_keyword(values, value)
+    for value in (
+        route.original_message,
+        route.canonical_question_uk or "",
+        route.vector_query_uk or "",
+    ):
+        for token in value.split():
+            stripped = token.strip(".,?!:;()[]{}\"'")
+            if len(stripped) >= 4:
+                _append_unique_keyword(values, stripped)
+            if len(values) >= 12:
+                return tuple(values)
+    return tuple(values)
+
+
+def _route_lexical_phrases(route: QueryRoute) -> tuple[str, ...]:
+    values: list[str] = []
+    for value in route.lexical_phrases:
+        _append_unique(values, value)
+    for value in (
+        route.original_message,
+        route.canonical_question_uk or "",
+        route.vector_query_uk or "",
+    ):
+        _append_unique(values, value)
+    return tuple(values)
+
+
+def _route_lexical_query(route: QueryRoute) -> str:
+    return "\n".join(
+        value
+        for value in (
+            route.original_message,
+            route.canonical_question_uk or "",
+            route.vector_query_uk or "",
+        )
+        if value.strip()
+    )
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    normalized = " ".join(str(value).strip().split())
+    if not normalized:
+        return
+    if normalized.casefold() in {item.casefold() for item in values}:
+        return
+    values.append(normalized)
+
+
+def _append_unique_keyword(values: list[str], value: str) -> None:
+    normalized = " ".join(str(value).strip().split())
+    if normalized.casefold() in _LEXICAL_TOKEN_STOPWORDS:
+        return
+    _append_unique(values, normalized)

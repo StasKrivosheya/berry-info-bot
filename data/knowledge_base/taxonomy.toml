@@ -62,6 +62,7 @@ aliases = [
   "скільки коштує",
 ]
 direction_sensitive = true
+requires_direction = true
 
 [topics.schedule]
 label_uk = "Графік і дати"
@@ -79,6 +80,7 @@ aliases = [
   "літо",
 ]
 direction_sensitive = true
+requires_direction = true
 
 [topics.programs]
 label_uk = "Програми"
@@ -97,6 +99,7 @@ direction_sensitive = true
 label_uk = "Трансфер"
 aliases = ["трансфер", "дорога", "доїхати", "автобус", "перевезення"]
 direction_sensitive = true
+requires_direction = true
 
 [topics.food]
 label_uk = "Харчування"

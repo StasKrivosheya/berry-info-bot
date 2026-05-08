@@ -1,13 +1,33 @@
 cases:
-  - id: uk_programs_requires_direction
+  - id: uk_programs_searches_broadly
     query: "Які є види програм?"
     route: "kb_query"
     topic_hint: "programs"
     direction_hints: ""
-    expected_should_search: false
+    expected_should_search: true
     expected_topic_hint: "programs"
     expected_direction_hints: ""
-    expected_response: "clarify"
+    expected_response: "search"
+
+  - id: ru_animals_unknown_topic_searches_broadly
+    query: "какие животные есть в парке?"
+    route: "kb_query"
+    topic_hint: ""
+    direction_hints: ""
+    expected_should_search: true
+    expected_topic_hint: ""
+    expected_direction_hints: ""
+    expected_response: "search"
+
+  - id: uk_services_searches_broadly
+    query: "додаткові послуги"
+    route: "kb_query"
+    topic_hint: "services"
+    direction_hints: ""
+    expected_should_search: true
+    expected_topic_hint: "services"
+    expected_direction_hints: ""
+    expected_response: "search"
 
   - id: uk_op_programs_searches
     query: "РЇРєС– С” РІРёРґРё РїСЂРѕРіСЂР°Рј РћРџ?"

@@ -29,6 +29,7 @@ class TopicDefinition:
     label_uk: str
     aliases: tuple[str, ...]
     direction_sensitive: bool = False
+    requires_direction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,9 +184,16 @@ class KnowledgeBaseTaxonomy:
         if direction_ids or topic_id is None:
             return False
         topic = self.topics.get(topic_id)
-        return bool(topic and topic.direction_sensitive and len(self.active_directions) > 1)
+        return bool(topic and topic.requires_direction and len(self.active_directions) > 1)
 
-    def should_clarify_topic(self, *, topic_id: str | None) -> bool:
+    def should_clarify_topic(
+        self,
+        *,
+        topic_id: str | None,
+        query_specificity: str = "vague",
+    ) -> bool:
+        if query_specificity == "concrete":
+            return False
         return topic_id is None or topic_id == GENERAL_TOPIC_ID
 
     def build_topic_clarification_text(self) -> str:
@@ -220,6 +228,7 @@ class KnowledgeBaseTaxonomy:
             (
                 f"- {topic.id}: {topic.label_uk}; "
                 f"direction_sensitive={str(topic.direction_sensitive).lower()}; "
+                f"requires_direction={str(topic.requires_direction).lower()}; "
                 f"aliases: {', '.join(topic.aliases[:8])}"
             )
             for topic in self.topics.values()
@@ -261,6 +270,7 @@ def load_taxonomy(path: Path = DEFAULT_TAXONOMY_PATH) -> KnowledgeBaseTaxonomy:
             label_uk=_required_str(raw_topic, "label_uk"),
             aliases=_str_tuple(raw_topic.get("aliases")),
             direction_sensitive=bool(raw_topic.get("direction_sensitive", False)),
+            requires_direction=bool(raw_topic.get("requires_direction", False)),
         )
         for topic_id, raw_topic in _dict(payload.get("topics")).items()
     )
@@ -422,4 +432,4 @@ def _contains_alias(haystack: str, alias: str) -> bool:
 
 def _requests_all_active_directions(haystack: str) -> bool:
     tokens = set(haystack.split())
-    return bool(tokens & {"всі", "усі", "усе", "обидва", "обидві", "both", "all"})
+    return bool(tokens & {"всі", "усі", "усе", "обидва", "обидві", "все", "оба", "both", "all"})
