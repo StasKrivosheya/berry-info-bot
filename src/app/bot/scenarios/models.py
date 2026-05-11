@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,9 +23,11 @@ class ScenarioButton:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioNode:
-    """Text + button payload for a single step in the scenario tree."""
+    """Content + button payload for a single step in the scenario tree."""
 
     node_id: str
+    title: str
     text: str
+    photo_path: Path | None = None
     buttons: tuple[ScenarioButton, ...] = ()
     parent_node_id: str | None = None
