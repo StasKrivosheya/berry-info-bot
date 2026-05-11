@@ -3,7 +3,7 @@
 # Managers usually edit:
 # - title: button label
 # - content_text: Markdown/text file shown after clicking the button
-# - content_photo: image file shown after clicking the button
+# - content_photos: image files shown after clicking the button
 # - children: nested buttons, in display order
 # - links: external URL buttons
 
@@ -17,15 +17,27 @@ children = ["family_rest", "organized_programs", "ecocamp", "other"]
 [nodes.family_rest]
 title = "Сімейний відпочинок"
 content_text = "texts/family_rest.md"
-children = ["park_schedule", "dates", "camping", "gazebos", "transfer"]
+children = ["park_schedule", "family_rest_price", "camping", "gazebos", "transfer"]
 
 [nodes.park_schedule]
 title = "Графік роботи парку"
 content_text = "texts/park_schedule.md"
+children = ["park_schedule_may", "park_schedule_summer"]
 
-[nodes.dates]
-title = "Дати"
-content_text = "texts/dates.md"
+[nodes.park_schedule_may]
+title = "травень"
+content_photos = ["media/family-rest-may.jpg"]
+
+[nodes.park_schedule_summer]
+title = "червень-серпень"
+content_photos = [
+  "media/family-rest-summer-saturday.jpg",
+  "media/family-rest-summer-sunday.jpg",
+]
+
+[nodes.family_rest_price]
+title = "Вартість"
+content_text = "texts/family_rest_price.md"
 
 [nodes.camping]
 title = "Кемпінг"
@@ -47,7 +59,7 @@ content_text = "texts/organized_programs.md"
 title = "Екотабір"
 content_text = "texts/ecocamp.md"
 # To show a designer-made presenter instead of text, use:
-# content_photo = "media/ecocamp-presenter.jpg"
+# content_photos = ["media/ecocamp-presenter.jpg"]
 
 [nodes.other]
 title = "Інше"

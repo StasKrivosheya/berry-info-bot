@@ -8,14 +8,23 @@ from app.bot.scenarios.catalog import (
     DIRECTIONS_NODE_ID,
     ECOCAMP_NODE_ID,
     FAMILY_REST_NODE_ID,
+    FAMILY_REST_PRICE_NODE_ID,
     MAIN_MENU_BACK_TARGET,
     MAIN_MENU_CONTACTS_TEXT,
     MAIN_MENU_DIRECTIONS_TEXT,
     OTHER_NODE_ID,
     OUTBOUND_WORKSHOPS_NODE_ID,
+    PARK_SCHEDULE_MAY_NODE_ID,
+    PARK_SCHEDULE_NODE_ID,
+    PARK_SCHEDULE_SUMMER_NODE_ID,
     get_node,
 )
-from app.bot.scenarios.keyboards import build_main_menu_keyboard, build_scenario_keyboard
+from app.bot.scenarios.keyboards import (
+    MAIN_MENU_BUTTON_TEXT,
+    SECTION_MENU_BUTTON_TEXT,
+    build_main_menu_keyboard,
+    build_scenario_keyboard,
+)
 
 
 def test_main_menu_keyboard_has_two_entry_buttons() -> None:
@@ -83,14 +92,88 @@ def test_other_keyboard_has_expected_items_and_back_button() -> None:
     ]
 
 
-def test_leaf_node_renders_only_back_button() -> None:
+def test_family_rest_keyboard_has_expected_items_and_back_button() -> None:
     node = get_node(FAMILY_REST_NODE_ID)
     assert node is not None
 
-    first_child_callback = node.buttons[0].target_node_id
-    assert first_child_callback is not None
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
 
-    leaf_node = get_node(first_child_callback)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        PARK_SCHEDULE_NODE_ID,
+        FAMILY_REST_PRICE_NODE_ID,
+        "camping",
+        "gazebos",
+        "transfer",
+        DIRECTIONS_NODE_ID,
+    ]
+
+
+def test_park_schedule_keyboard_has_month_items_and_back_button() -> None:
+    node = get_node(PARK_SCHEDULE_NODE_ID)
+    assert node is not None
+    assert node.text == "Оберіть місяць відвідування"
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        PARK_SCHEDULE_MAY_NODE_ID,
+        PARK_SCHEDULE_SUMMER_NODE_ID,
+        FAMILY_REST_NODE_ID,
+    ]
+
+
+def test_park_schedule_month_nodes_have_presenter_photos() -> None:
+    may_node = get_node(PARK_SCHEDULE_MAY_NODE_ID)
+    summer_node = get_node(PARK_SCHEDULE_SUMMER_NODE_ID)
+    assert may_node is not None
+    assert summer_node is not None
+
+    assert len(may_node.photo_paths) == 1
+    assert len(summer_node.photo_paths) == 2
+    assert all(path.is_file() for path in may_node.photo_paths + summer_node.photo_paths)
+
+
+def test_album_node_renders_navigation_keyboard() -> None:
+    node = get_node(PARK_SCHEDULE_SUMMER_NODE_ID)
+    assert node is not None
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        BACK_BUTTON_TEXT,
+        SECTION_MENU_BUTTON_TEXT,
+        MAIN_MENU_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        PARK_SCHEDULE_NODE_ID,
+        FAMILY_REST_NODE_ID,
+        MAIN_MENU_BACK_TARGET,
+    ]
+
+
+def test_leaf_node_renders_only_back_button() -> None:
+    leaf_node = get_node(FAMILY_REST_PRICE_NODE_ID)
     assert leaf_node is not None
 
     keyboard = build_scenario_keyboard(leaf_node)
