@@ -1,0 +1,72 @@
+# Bot button scenarios.
+#
+# Managers usually edit:
+# - title: button label
+# - content_text: Markdown/text file shown after clicking the button
+# - content_photo: image file shown after clicking the button
+# - children: nested buttons, in display order
+# - links: external URL buttons
+
+main_menu = ["directions", "contacts"]
+
+[nodes.directions]
+title = "Направлення"
+content_text = "texts/directions.md"
+children = ["family_rest", "organized_programs", "ecocamp", "other"]
+
+[nodes.family_rest]
+title = "Сімейний відпочинок"
+content_text = "texts/family_rest.md"
+children = ["park_schedule", "dates", "camping", "gazebos", "transfer"]
+
+[nodes.park_schedule]
+title = "Графік роботи парку"
+content_text = "texts/park_schedule.md"
+
+[nodes.dates]
+title = "Дати"
+content_text = "texts/dates.md"
+
+[nodes.camping]
+title = "Кемпінг"
+content_text = "texts/camping.md"
+
+[nodes.gazebos]
+title = "Альтанки"
+content_text = "texts/gazebos.md"
+
+[nodes.transfer]
+title = "Трансфер"
+content_text = "texts/transfer.md"
+
+[nodes.organized_programs]
+title = "Організовані програми"
+content_text = "texts/organized_programs.md"
+
+[nodes.ecocamp]
+title = "Екотабір"
+content_text = "texts/ecocamp.md"
+# To show a designer-made presenter instead of text, use:
+# content_photo = "media/ecocamp-presenter.jpg"
+
+[nodes.other]
+title = "Інше"
+content_text = "texts/other.md"
+children = ["outbound_workshops", "birthdays"]
+
+[nodes.outbound_workshops]
+title = "Виїзні майстеркласи"
+content_text = "texts/outbound_workshops.md"
+
+[nodes.birthdays]
+title = "Дні народження"
+content_text = "texts/birthdays.md"
+
+[nodes.contacts]
+title = "Контакти"
+content_text = "texts/contacts.md"
+links = [
+  { title = "Instagram", url = "https://www.instagram.com/berryland_dnipro/" },
+  { title = "Google Карти", url = "https://maps.app.goo.gl/jhKpvRc2m93Nj2BF7" },
+  { title = "Сайт", url = "https://berryland.com.ua" },
+]
