@@ -90,7 +90,7 @@ async def open_top_level_section(message: Message) -> None:
         chat_id=message.chat.id,
         user_id=message.from_user.id,
         text=node.text,
-        photo_path=node.photo_path,
+        photo_paths=node.photo_paths,
         reply_markup=build_scenario_keyboard(node),
     )
 
@@ -118,7 +118,7 @@ async def open_scenario_step(
         chat_id=chat_id,
         user_id=callback.from_user.id,
         text=node.text,
-        photo_path=node.photo_path,
+        photo_paths=node.photo_paths,
         reply_markup=build_scenario_keyboard(node),
     )
 
@@ -163,7 +163,7 @@ async def navigate_back(
         chat_id=chat_id,
         user_id=callback.from_user.id,
         text=node.text,
-        photo_path=node.photo_path,
+        photo_paths=node.photo_paths,
         reply_markup=build_scenario_keyboard(node),
     )
 

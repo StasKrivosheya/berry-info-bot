@@ -9,10 +9,25 @@
 Для фото-презентерів покладіть картинку в `media/` і в потрібному розділі `menu.toml` додайте:
 
 ```toml
-content_photo = "media/example.jpg"
+content_photos = ["media/example.jpg"]
 ```
 
-Якщо в розділі є і `content_text`, і `content_photo`, бот покаже фото з текстом як підписом.
+Якщо треба показати кілька картинок підряд:
+
+```toml
+content_photos = [
+  "media/first.jpg",
+  "media/second.jpg",
+]
+```
+
+Якщо картинки не потрібні, поле `content_photos` можна не додавати або лишити порожнім:
+
+```toml
+content_photos = []
+```
+
+Якщо в розділі є і `content_text`, і `content_photos`, бот покаже текст як підпис до першого фото.
 
 `children` відповідає за вкладені кнопки. Наприклад:
 

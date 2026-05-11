@@ -52,14 +52,26 @@ def load_scenario_catalog(
             for child_id in children
         ]
         buttons.extend(_load_link_buttons(node_config, node_id=node_id))
+        photo_paths = _load_photo_paths(node_config, base_dir=base_dir, node_id=node_id)
 
         nodes[node_id] = ScenarioNode(
             node_id=node_id,
             title=title,
-            text=_load_node_text(node_config, base_dir=base_dir, fallback_title=title),
-            photo_path=_load_photo_path(node_config, base_dir=base_dir, node_id=node_id),
+            text=_load_node_text(
+                node_config,
+                base_dir=base_dir,
+                fallback_title=title,
+                has_photos=bool(photo_paths),
+            ),
+            photo_paths=photo_paths,
             buttons=tuple(buttons),
             parent_node_id=parent_by_child.get(node_id),
+            section_node_id=_resolve_section_node_id(
+                node_id,
+                parent_by_child=parent_by_child,
+                main_menu_back_target=main_menu_back_target,
+                main_menu_node_ids=main_menu_node_ids,
+            ),
         )
 
     return ScenarioCatalog(
@@ -114,7 +126,35 @@ def _load_link_buttons(node_config: dict[str, Any], *, node_id: str) -> list[Sce
     return buttons
 
 
-def _load_node_text(node_config: dict[str, Any], *, base_dir: Path, fallback_title: str) -> str:
+def _resolve_section_node_id(
+    node_id: str,
+    *,
+    parent_by_child: dict[str, str],
+    main_menu_back_target: str,
+    main_menu_node_ids: list[str],
+) -> str | None:
+    parent_id = parent_by_child.get(node_id)
+    if parent_id is None or parent_id == main_menu_back_target:
+        return None
+
+    top_level_node_ids = set(main_menu_node_ids)
+    current_id = node_id
+    while True:
+        parent_id = parent_by_child.get(current_id)
+        if parent_id is None or parent_id == main_menu_back_target:
+            return current_id
+        if parent_id in top_level_node_ids:
+            return current_id
+        current_id = parent_id
+
+
+def _load_node_text(
+    node_config: dict[str, Any],
+    *,
+    base_dir: Path,
+    fallback_title: str,
+    has_photos: bool,
+) -> str:
     content_text = node_config.get("content_text")
     if content_text is not None:
         path = base_dir / _str(content_text, field="content_text")
@@ -124,15 +164,30 @@ def _load_node_text(node_config: dict[str, Any], *, base_dir: Path, fallback_tit
     if inline_text is not None:
         return _str(inline_text, field="text").strip()
 
+    if has_photos:
+        return ""
+
     return f"Інформація про {fallback_title}"
 
 
-def _load_photo_path(node_config: dict[str, Any], *, base_dir: Path, node_id: str) -> Path | None:
-    content_photo = node_config.get("content_photo")
-    if content_photo is None:
-        return None
+def _load_photo_paths(
+    node_config: dict[str, Any],
+    *,
+    base_dir: Path,
+    node_id: str,
+) -> tuple[Path, ...]:
+    content_photos = node_config.get("content_photos")
+    if content_photos is None:
+        return ()
 
-    path = base_dir / _str(content_photo, field=f"nodes.{node_id}.content_photo")
+    return tuple(
+        _resolve_photo_path(base_dir, raw_path, field=f"nodes.{node_id}.content_photos[]")
+        for raw_path in _str_list(content_photos, field=f"nodes.{node_id}.content_photos")
+    )
+
+
+def _resolve_photo_path(base_dir: Path, value: Any, *, field: str) -> Path:
+    path = base_dir / _str(value, field=field)
     if not path.is_file():
         msg = f"Scenario photo file does not exist: {path}"
         raise ValueError(msg)

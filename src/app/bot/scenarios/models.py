@@ -28,6 +28,7 @@ class ScenarioNode:
     node_id: str
     title: str
     text: str
-    photo_path: Path | None = None
+    photo_paths: tuple[Path, ...] = ()
     buttons: tuple[ScenarioButton, ...] = ()
     parent_node_id: str | None = None
+    section_node_id: str | None = None

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    FSInputFile,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +25,7 @@ class ChatUserKey:
 
 
 ReplyMarkupType = InlineKeyboardMarkup | ReplyKeyboardMarkup | None
+ALBUM_NAVIGATION_TEXT = "Навігація"
 
 
 class ScenarioMessenger:
@@ -33,23 +41,24 @@ class ScenarioMessenger:
         chat_id: int,
         user_id: int,
         text: str,
-        photo_path: Path | None = None,
+        photo_paths: Sequence[Path] = (),
         reply_markup: ReplyMarkupType = None,
     ) -> Message:
         key = ChatUserKey(chat_id=chat_id, user_id=user_id)
         await self._clear_previous_inline_keyboard(bot=bot, key=key)
 
-        if photo_path is None:
+        if not photo_paths:
             sent_message = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
                 reply_markup=reply_markup,
             )
         else:
-            sent_message = await bot.send_photo(
+            sent_message = await self._send_photos(
+                bot=bot,
                 chat_id=chat_id,
-                photo=FSInputFile(photo_path),
-                caption=text or None,
+                text=text,
+                photo_paths=photo_paths,
                 reply_markup=reply_markup,
             )
 
@@ -59,6 +68,41 @@ class ScenarioMessenger:
             self._last_inline_message_ids.pop(key, None)
 
         return sent_message
+
+    async def _send_photos(
+        self,
+        *,
+        bot: Bot,
+        chat_id: int,
+        text: str,
+        photo_paths: Sequence[Path],
+        reply_markup: ReplyMarkupType,
+    ) -> Message:
+        if len(photo_paths) == 1:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=FSInputFile(photo_paths[0]),
+                caption=text or None,
+                reply_markup=reply_markup,
+            )
+
+        sent_messages = await bot.send_media_group(
+            chat_id=chat_id,
+            media=[
+                InputMediaPhoto(
+                    media=FSInputFile(photo_path),
+                    caption=(text or None) if index == 0 else None,
+                )
+                for index, photo_path in enumerate(photo_paths)
+            ],
+        )
+        if reply_markup is not None:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=ALBUM_NAVIGATION_TEXT,
+                reply_markup=reply_markup,
+            )
+        return sent_messages[-1]
 
     async def _clear_previous_inline_keyboard(self, *, bot: Bot, key: ChatUserKey) -> None:
         previous_message_id = self._last_inline_message_ids.get(key)
