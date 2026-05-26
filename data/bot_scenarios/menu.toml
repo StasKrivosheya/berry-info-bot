@@ -5,6 +5,7 @@
 # - content_text: Markdown/text file shown after clicking the button
 # - content_photos: image files shown after clicking the button
 # - children: nested buttons, in display order
+# - navigation: optional section navigation buttons for text-only detail pages
 # - links: external URL buttons
 
 main_menu = ["directions", "contacts"]
@@ -26,30 +27,97 @@ children = ["park_schedule_may", "park_schedule_summer"]
 
 [nodes.park_schedule_may]
 title = "травень"
-content_photos = ["media/family-rest-may.jpg"]
+content_photos = ["media/Презентація-СВ-BL-2026-s_page-0004.jpg"]
 
 [nodes.park_schedule_summer]
 title = "червень-серпень"
 content_photos = [
-  "media/family-rest-summer-saturday.jpg",
-  "media/family-rest-summer-sunday.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0006.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0009.jpg",
 ]
 
 [nodes.family_rest_price]
 title = "Вартість"
 content_text = "texts/family_rest_price.md"
+children = [
+  "family_rest_price_may",
+  "family_rest_price_summer_saturday",
+  "family_rest_price_summer_sunday",
+]
+
+[nodes.family_rest_price_may]
+title = "Травень"
+content_photos = ["media/Презентація-СВ-BL-2026-s_page-0005.jpg"]
+
+[nodes.family_rest_price_summer_saturday]
+title = "Літо, субота"
+content_photos = [
+  "media/Презентація-СВ-BL-2026-s_page-0007.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0008.jpg",
+]
+
+[nodes.family_rest_price_summer_sunday]
+title = "Літо, неділя"
+content_photos = [
+  "media/Презентація-СВ-BL-2026-s_page-0010.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0011.jpg",
+]
 
 [nodes.camping]
 title = "Кемпінг"
 content_text = "texts/camping.md"
+children = ["camping_may", "camping_summer"]
+
+[nodes.camping_may]
+title = "Ціни у травні"
+content_text = "texts/camping_may.md"
+navigation = "section"
+
+[nodes.camping_summer]
+title = "Ціни влітку"
+content_text = "texts/camping_summer.md"
+navigation = "section"
 
 [nodes.gazebos]
 title = "Альтанки"
-content_text = "texts/gazebos.md"
+content_photos = ["media/мапа.jpg"]
+children = ["gazebos_terms"]
+
+[nodes.gazebos_terms]
+title = "Умови відпочинку"
+content_photos = [
+  "media/умови.jpg",
+  "media/умови-2.jpg",
+]
 
 [nodes.transfer]
 title = "Трансфер"
 content_text = "texts/transfer.md"
+children = ["transfer_dnipro", "transfer_samar"]
+
+[nodes.transfer_dnipro]
+title = "Дніпро"
+content_text = "texts/transfer_dnipro.md"
+children = ["transfer_dnipro_terms"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/ts-1" },
+]
+
+[nodes.transfer_dnipro_terms]
+title = "Умови бронювання"
+content_text = "texts/transfer_booking_terms.md"
+
+[nodes.transfer_samar]
+title = "Самар"
+content_text = "texts/transfer_samar.md"
+children = ["transfer_samar_terms"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/ts-1" },
+]
+
+[nodes.transfer_samar_terms]
+title = "Умови бронювання"
+content_text = "texts/transfer_booking_terms.md"
 
 [nodes.organized_programs]
 title = "Організовані програми"

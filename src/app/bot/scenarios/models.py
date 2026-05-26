@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+DEFAULT_NAVIGATION = "default"
+SECTION_NAVIGATION = "section"
+
 
 @dataclass(frozen=True, slots=True)
 class ScenarioButton:
@@ -32,3 +35,4 @@ class ScenarioNode:
     buttons: tuple[ScenarioButton, ...] = ()
     parent_node_id: str | None = None
     section_node_id: str | None = None
+    navigation: str = DEFAULT_NAVIGATION

@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.bot.scenarios.models import ScenarioButton, ScenarioNode
+from app.bot.scenarios.models import (
+    DEFAULT_NAVIGATION,
+    SECTION_NAVIGATION,
+    ScenarioButton,
+    ScenarioNode,
+)
 
 DEFAULT_SCENARIO_CONFIG_PATH = Path("data/bot_scenarios/menu.toml")
 
@@ -72,6 +77,7 @@ def load_scenario_catalog(
                 main_menu_back_target=main_menu_back_target,
                 main_menu_node_ids=main_menu_node_ids,
             ),
+            navigation=_load_navigation(node_config, node_id=node_id),
         )
 
     return ScenarioCatalog(
@@ -124,6 +130,18 @@ def _load_link_buttons(node_config: dict[str, Any], *, node_id: str) -> list[Sce
             ),
         )
     return buttons
+
+
+def _load_navigation(node_config: dict[str, Any], *, node_id: str) -> str:
+    raw_navigation = node_config.get("navigation")
+    if raw_navigation is None:
+        return DEFAULT_NAVIGATION
+
+    navigation = _str(raw_navigation, field=f"nodes.{node_id}.navigation")
+    if navigation != SECTION_NAVIGATION:
+        msg = f"Unsupported navigation value for nodes.{node_id}: {navigation!r}."
+        raise ValueError(msg)
+    return navigation
 
 
 def _resolve_section_node_id(

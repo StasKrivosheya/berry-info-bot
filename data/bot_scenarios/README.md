@@ -35,6 +35,12 @@ content_photos = []
 children = ["outbound_workshops", "birthdays"]
 ```
 
+Якщо під текстовою сторінкою потрібні кнопки `Назад`, `Меню Розділу` і `Головне Меню`, додайте:
+
+```toml
+navigation = "section"
+```
+
 `links` відповідає за кнопки-посилання:
 
 ```toml

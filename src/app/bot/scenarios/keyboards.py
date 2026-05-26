@@ -6,11 +6,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.scenarios.callbacks import NAV_ACTION_BACK, NAV_ACTION_OPEN, ScenarioNavCallback
 from app.bot.scenarios.catalog import (
     BACK_BUTTON_TEXT,
-    MAIN_MENU_BACK_TARGET,
+    DIRECTIONS_NODE_ID,
     MAIN_MENU_CONTACTS_TEXT,
     MAIN_MENU_DIRECTIONS_TEXT,
 )
-from app.bot.scenarios.models import ScenarioNode
+from app.bot.scenarios.models import SECTION_NAVIGATION, ScenarioNode
 
 MAIN_MENU_BUTTON_TEXT = "Головне Меню"
 SECTION_MENU_BUTTON_TEXT = "Меню Розділу"
@@ -33,8 +33,8 @@ def build_main_menu_keyboard() -> ReplyKeyboardMarkup:
 def build_scenario_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup | None:
     """Build inline keyboard from scenario node configuration."""
 
-    if len(node.photo_paths) > 1 and node.section_node_id is not None:
-        return _build_album_navigation_keyboard(node)
+    if _uses_section_navigation(node):
+        return _build_section_navigation_keyboard(node)
 
     if not node.buttons and node.parent_node_id is None:
         return None
@@ -63,7 +63,13 @@ def build_scenario_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup | None:
     return builder.as_markup()
 
 
-def _build_album_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup:
+def _uses_section_navigation(node: ScenarioNode) -> bool:
+    return node.section_node_id is not None and (
+        node.navigation == SECTION_NAVIGATION or not node.buttons
+    )
+
+
+def _build_section_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     if node.parent_node_id is not None:
@@ -83,8 +89,8 @@ def _build_album_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup
     _add_nav_button(
         builder,
         text=MAIN_MENU_BUTTON_TEXT,
-        action=NAV_ACTION_BACK,
-        node_id=MAIN_MENU_BACK_TARGET,
+        action=NAV_ACTION_OPEN,
+        node_id=DIRECTIONS_NODE_ID,
     )
 
     builder.adjust(1)
