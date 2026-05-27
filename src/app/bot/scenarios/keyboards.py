@@ -80,12 +80,13 @@ def _build_section_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMark
             node_id=node.parent_node_id,
         )
 
-    _add_nav_button(
-        builder,
-        text=SECTION_MENU_BUTTON_TEXT,
-        action=NAV_ACTION_OPEN,
-        node_id=node.section_node_id,
-    )
+    if node.section_node_id != node.parent_node_id:
+        _add_nav_button(
+            builder,
+            text=SECTION_MENU_BUTTON_TEXT,
+            action=NAV_ACTION_OPEN,
+            node_id=node.section_node_id,
+        )
     _add_nav_button(
         builder,
         text=MAIN_MENU_BUTTON_TEXT,

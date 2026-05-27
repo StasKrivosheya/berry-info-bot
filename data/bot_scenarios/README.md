@@ -41,6 +41,8 @@ children = ["outbound_workshops", "birthdays"]
 navigation = "section"
 ```
 
+Якщо `Назад` і `Меню Розділу` ведуть в один екран, бот покаже тільки `Назад`.
+
 `links` відповідає за кнопки-посилання:
 
 ```toml

@@ -187,6 +187,29 @@ def test_organized_programs_information_nodes_have_presenter_photos() -> None:
         assert all(path.is_file() for path in node.photo_paths)
 
 
+def test_organized_program_leaf_omits_duplicate_section_menu_button() -> None:
+    node = get_node(ORGANIZED_PROGRAMS_PRICE_NODE_ID)
+    assert node is not None
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        BACK_BUTTON_TEXT,
+        MAIN_MENU_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        ORGANIZED_PROGRAMS_NODE_ID,
+        DIRECTIONS_NODE_ID,
+    ]
+
+
 def test_organized_program_topics_keyboard_has_program_items() -> None:
     node = get_node(ORGANIZED_PROGRAMS_TOPICS_NODE_ID)
     assert node is not None
@@ -518,7 +541,7 @@ def test_album_node_renders_navigation_keyboard() -> None:
     ]
 
 
-def test_text_leaf_node_renders_section_navigation_keyboard() -> None:
+def test_text_leaf_node_omits_duplicate_section_menu_button() -> None:
     leaf_node = get_node(BIRTHDAYS_NODE_ID)
     assert leaf_node is not None
 
@@ -528,7 +551,6 @@ def test_text_leaf_node_renders_section_navigation_keyboard() -> None:
     buttons = [button for row in keyboard.inline_keyboard for button in row]
     assert [button.text for button in buttons] == [
         BACK_BUTTON_TEXT,
-        SECTION_MENU_BUTTON_TEXT,
         MAIN_MENU_BUTTON_TEXT,
     ]
 
@@ -542,7 +564,6 @@ def test_text_leaf_node_renders_section_navigation_keyboard() -> None:
         if button.callback_data is not None
     ]
     assert callback_targets == [
-        OTHER_NODE_ID,
         OTHER_NODE_ID,
         DIRECTIONS_NODE_ID,
     ]
