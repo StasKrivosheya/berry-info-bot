@@ -122,6 +122,68 @@ content_text = "texts/transfer_booking_terms.md"
 [nodes.organized_programs]
 title = "Організовані програми"
 content_text = "texts/organized_programs.md"
+children = [
+  "organized_programs_details",
+  "organized_programs_price",
+  "organized_programs_topics",
+  "organized_programs_extras",
+]
+
+[nodes.organized_programs_details]
+title = "Графік та умови"
+content_photos = ["media/Загальна інформація.jpg"]
+
+[nodes.organized_programs_price]
+title = "Вартість"
+content_photos = ["media/Вартість.jpg"]
+
+[nodes.organized_programs_topics]
+title = "Програми"
+content_photos = ["media/ОП_Тематики програм.jpg"]
+children = [
+  "organized_programs_berry_expedition",
+  "organized_programs_ranch_adventures",
+  "organized_programs_graduation_level",
+  "organized_programs_team_vibe",
+  "organized_programs_bubble_boom",
+  "organized_programs_overnight",
+  "organized_programs_preschool_graduation",
+]
+
+[nodes.organized_programs_berry_expedition]
+title = "Ягідна експедиція"
+content_photos = ["media/ОП_Ягідна.jpg"]
+
+[nodes.organized_programs_ranch_adventures]
+title = "Пригоди на Ранчо"
+content_photos = ["media/ОП_Ранчо.jpg"]
+
+[nodes.organized_programs_graduation_level]
+title = "Випускний «Level 4.0 - Done»"
+content_photos = ["media/photo_5417970806207222854_y.jpg"]
+
+[nodes.organized_programs_team_vibe]
+title = "Тімбілдінг «TEAM VIBE»"
+content_photos = ["media/ОП_Тімбілдинг.jpg"]
+
+[nodes.organized_programs_bubble_boom]
+title = "«BERRY BUBBLE BOOM»"
+content_photos = ["media/ОП_Бульбашкова.jpg"]
+
+[nodes.organized_programs_overnight]
+title = "Унікальна програма з ночівлею у Berry Land"
+content_photos = ["media/photo_5417970806207222858_y.jpg"]
+
+[nodes.organized_programs_preschool_graduation]
+title = "Випускний для дошкільнят «Крила дитинства»"
+content_photos = ["media/ОП_Випускний-для-дошкільнят.jpg"]
+
+[nodes.organized_programs_extras]
+title = "Додаткові послуги"
+content_photos = [
+  "media/Додаткові послуги1.jpg",
+  "media/Додатокві послуги2.jpg",
+]
 
 [nodes.ecocamp]
 title = "Екотабір"

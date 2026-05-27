@@ -20,6 +20,18 @@ from app.bot.scenarios.catalog import (
     MAIN_MENU_BACK_TARGET,
     MAIN_MENU_CONTACTS_TEXT,
     MAIN_MENU_DIRECTIONS_TEXT,
+    ORGANIZED_PROGRAMS_BERRY_EXPEDITION_NODE_ID,
+    ORGANIZED_PROGRAMS_BUBBLE_BOOM_NODE_ID,
+    ORGANIZED_PROGRAMS_DETAILS_NODE_ID,
+    ORGANIZED_PROGRAMS_EXTRAS_NODE_ID,
+    ORGANIZED_PROGRAMS_GRADUATION_LEVEL_NODE_ID,
+    ORGANIZED_PROGRAMS_NODE_ID,
+    ORGANIZED_PROGRAMS_OVERNIGHT_NODE_ID,
+    ORGANIZED_PROGRAMS_PRESCHOOL_GRADUATION_NODE_ID,
+    ORGANIZED_PROGRAMS_PRICE_NODE_ID,
+    ORGANIZED_PROGRAMS_RANCH_ADVENTURES_NODE_ID,
+    ORGANIZED_PROGRAMS_TEAM_VIBE_NODE_ID,
+    ORGANIZED_PROGRAMS_TOPICS_NODE_ID,
     OTHER_NODE_ID,
     OUTBOUND_WORKSHOPS_NODE_ID,
     PARK_SCHEDULE_MAY_NODE_ID,
@@ -126,6 +138,107 @@ def test_family_rest_keyboard_has_expected_items_and_back_button() -> None:
         "transfer",
         DIRECTIONS_NODE_ID,
     ]
+
+
+def test_organized_programs_keyboard_has_expected_items_and_back_button() -> None:
+    node = get_node(ORGANIZED_PROGRAMS_NODE_ID)
+    assert node is not None
+    assert node.text == "Організовані програми"
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        "Графік та умови",
+        "Вартість",
+        "Програми",
+        "Додаткові послуги",
+        BACK_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        ORGANIZED_PROGRAMS_DETAILS_NODE_ID,
+        ORGANIZED_PROGRAMS_PRICE_NODE_ID,
+        ORGANIZED_PROGRAMS_TOPICS_NODE_ID,
+        ORGANIZED_PROGRAMS_EXTRAS_NODE_ID,
+        DIRECTIONS_NODE_ID,
+    ]
+
+
+def test_organized_programs_information_nodes_have_presenter_photos() -> None:
+    expected_photos = {
+        ORGANIZED_PROGRAMS_DETAILS_NODE_ID: ("Загальна інформація.jpg",),
+        ORGANIZED_PROGRAMS_PRICE_NODE_ID: ("Вартість.jpg",),
+        ORGANIZED_PROGRAMS_EXTRAS_NODE_ID: (
+            "Додаткові послуги1.jpg",  # noqa: RUF001
+            "Додатокві послуги2.jpg",  # noqa: RUF001
+        ),
+    }
+
+    for node_id, file_names in expected_photos.items():
+        node = get_node(node_id)
+        assert node is not None
+        assert tuple(path.name for path in node.photo_paths) == file_names
+        assert all(path.is_file() for path in node.photo_paths)
+
+
+def test_organized_program_topics_keyboard_has_program_items() -> None:
+    node = get_node(ORGANIZED_PROGRAMS_TOPICS_NODE_ID)
+    assert node is not None
+    assert tuple(path.name for path in node.photo_paths) == ("ОП_Тематики програм.jpg",)
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        "Ягідна експедиція",
+        "Пригоди на Ранчо",
+        "Випускний «Level 4.0 - Done»",
+        "Тімбілдінг «TEAM VIBE»",
+        "«BERRY BUBBLE BOOM»",
+        "Унікальна програма з ночівлею у Berry Land",  # noqa: RUF001
+        "Випускний для дошкільнят «Крила дитинства»",
+        BACK_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        ORGANIZED_PROGRAMS_BERRY_EXPEDITION_NODE_ID,
+        ORGANIZED_PROGRAMS_RANCH_ADVENTURES_NODE_ID,
+        ORGANIZED_PROGRAMS_GRADUATION_LEVEL_NODE_ID,
+        ORGANIZED_PROGRAMS_TEAM_VIBE_NODE_ID,
+        ORGANIZED_PROGRAMS_BUBBLE_BOOM_NODE_ID,
+        ORGANIZED_PROGRAMS_OVERNIGHT_NODE_ID,
+        ORGANIZED_PROGRAMS_PRESCHOOL_GRADUATION_NODE_ID,
+        ORGANIZED_PROGRAMS_NODE_ID,
+    ]
+
+
+def test_organized_program_theme_nodes_use_correct_photos() -> None:
+    expected_photos = {
+        ORGANIZED_PROGRAMS_BERRY_EXPEDITION_NODE_ID: "ОП_Ягідна.jpg",
+        ORGANIZED_PROGRAMS_RANCH_ADVENTURES_NODE_ID: "ОП_Ранчо.jpg",
+        ORGANIZED_PROGRAMS_GRADUATION_LEVEL_NODE_ID: "photo_5417970806207222854_y.jpg",
+        ORGANIZED_PROGRAMS_TEAM_VIBE_NODE_ID: "ОП_Тімбілдинг.jpg",
+        ORGANIZED_PROGRAMS_BUBBLE_BOOM_NODE_ID: "ОП_Бульбашкова.jpg",
+        ORGANIZED_PROGRAMS_OVERNIGHT_NODE_ID: "photo_5417970806207222858_y.jpg",
+        ORGANIZED_PROGRAMS_PRESCHOOL_GRADUATION_NODE_ID: "ОП_Випускний-для-дошкільнят.jpg",
+    }
+
+    for node_id, file_name in expected_photos.items():
+        node = get_node(node_id)
+        assert node is not None
+        assert tuple(path.name for path in node.photo_paths) == (file_name,)
+        assert node.photo_paths[0].is_file()
 
 
 def test_park_schedule_keyboard_has_month_items_and_back_button() -> None:
