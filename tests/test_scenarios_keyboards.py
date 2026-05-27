@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from app.bot.scenarios.callbacks import NAV_ACTION_BACK, NAV_ACTION_OPEN, ScenarioNavCallback
+from app.bot.scenarios.callbacks import NAV_ACTION_OPEN, ScenarioNavCallback
 from app.bot.scenarios.catalog import (
     BACK_BUTTON_TEXT,
+    BIRTHDAYS_EXTRAS_NODE_ID,
     BIRTHDAYS_NODE_ID,
     CAMPING_MAY_NODE_ID,
     CAMPING_NODE_ID,
@@ -35,6 +36,7 @@ from app.bot.scenarios.catalog import (
     ORGANIZED_PROGRAMS_TEAM_VIBE_NODE_ID,
     ORGANIZED_PROGRAMS_TOPICS_NODE_ID,
     OTHER_NODE_ID,
+    OUTBOUND_WORKSHOPS_CONTACTS_NODE_ID,
     OUTBOUND_WORKSHOPS_NODE_ID,
     PARK_SCHEDULE_MAY_NODE_ID,
     PARK_SCHEDULE_NODE_ID,
@@ -113,8 +115,8 @@ def test_other_keyboard_has_expected_items_and_back_button() -> None:
         if button.callback_data is not None
     ]
     assert callback_targets == [
-        OUTBOUND_WORKSHOPS_NODE_ID,
         BIRTHDAYS_NODE_ID,
+        OUTBOUND_WORKSHOPS_NODE_ID,
         DIRECTIONS_NODE_ID,
     ]
 
@@ -609,29 +611,119 @@ def test_album_node_renders_navigation_keyboard() -> None:
     ]
 
 
-def test_text_leaf_node_omits_duplicate_section_menu_button() -> None:
-    leaf_node = get_node(BIRTHDAYS_NODE_ID)
-    assert leaf_node is not None
+def test_birthdays_keyboard_has_extras_button_and_presenter_photo() -> None:
+    node = get_node(BIRTHDAYS_NODE_ID)
+    assert node is not None
+    assert tuple(path.name for path in node.photo_paths) == (
+        "Презентація-ДН-BL-2026-s-1_page-0002.jpg",
+    )
+    assert node.photo_paths[0].is_file()
 
-    keyboard = build_scenario_keyboard(leaf_node)
+    keyboard = build_scenario_keyboard(node)
     assert keyboard is not None
 
     buttons = [button for row in keyboard.inline_keyboard for button in row]
     assert [button.text for button in buttons] == [
+        "Додаткові послуги",
         BACK_BUTTON_TEXT,
-        MAIN_MENU_BUTTON_TEXT,
     ]
-
-    back_callback = buttons[0].callback_data
-    assert back_callback is not None
-    assert ScenarioNavCallback.unpack(back_callback).action == NAV_ACTION_BACK
-
     callback_targets = [
         ScenarioNavCallback.unpack(button.callback_data).node_id
         for button in buttons
         if button.callback_data is not None
     ]
     assert callback_targets == [
+        BIRTHDAYS_EXTRAS_NODE_ID,
+        OTHER_NODE_ID,
+    ]
+
+
+def test_birthdays_extras_node_renders_media_group_navigation() -> None:
+    node = get_node(BIRTHDAYS_EXTRAS_NODE_ID)
+    assert node is not None
+    assert tuple(path.name for path in node.photo_paths) == (
+        "Презентація-ДН-BL-2026-s-1_page-0003.jpg",
+        "Презентація-ДН-BL-2026-s-1_page-0004.jpg",
+        "Презентація-ДН-BL-2026-s-1_page-0005.jpg",
+    )
+    assert all(path.is_file() for path in node.photo_paths)
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        BACK_BUTTON_TEXT,
+        SECTION_MENU_BUTTON_TEXT,
+        MAIN_MENU_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        BIRTHDAYS_NODE_ID,
+        OTHER_NODE_ID,
+        DIRECTIONS_NODE_ID,
+    ]
+
+
+def test_outbound_workshops_keyboard_opens_contacts() -> None:
+    node = get_node(OUTBOUND_WORKSHOPS_NODE_ID)
+    assert node is not None
+    assert node.text == "Запитуйте актуальну інформацію у наших менеджерів"  # noqa: RUF001
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        "Контакти",
+        BACK_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        OUTBOUND_WORKSHOPS_CONTACTS_NODE_ID,
+        OTHER_NODE_ID,
+    ]
+
+
+def test_outbound_workshops_contacts_reuses_contacts_with_section_navigation() -> None:
+    node = get_node(OUTBOUND_WORKSHOPS_CONTACTS_NODE_ID)
+    contacts_node = get_node(CONTACTS_NODE_ID)
+    assert node is not None
+    assert contacts_node is not None
+    assert node.text == contacts_node.text
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        "Instagram",
+        "Google Карти",
+        "Сайт",
+        BACK_BUTTON_TEXT,
+        SECTION_MENU_BUTTON_TEXT,
+        MAIN_MENU_BUTTON_TEXT,
+    ]
+    assert [button.url for button in buttons[:3]] == [
+        "https://www.instagram.com/berryland_dnipro/",
+        "https://maps.app.goo.gl/jhKpvRc2m93Nj2BF7",
+        "https://berryland.com.ua",
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        OUTBOUND_WORKSHOPS_NODE_ID,
         OTHER_NODE_ID,
         DIRECTIONS_NODE_ID,
     ]

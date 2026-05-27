@@ -37,6 +37,10 @@ children = ["child"]
 title = "Child"
 content_text = "texts/child.md"
 content_photos = ["media/child.png", "media/child-2.png"]
+
+[nodes.alias]
+title = "Alias"
+content_from = "root"
 """,
         encoding="utf-8",
     )
@@ -46,6 +50,7 @@ content_photos = ["media/child.png", "media/child-2.png"]
     root = catalog.nodes["root"]
     section = catalog.nodes["section"]
     child = catalog.nodes["child"]
+    alias = catalog.nodes["alias"]
     assert catalog.main_menu_actions == {"Root": "root"}
     assert root.text == "Root text"
     assert [button.target_node_id for button in root.buttons] == ["section", None]
@@ -58,6 +63,8 @@ content_photos = ["media/child.png", "media/child-2.png"]
         tmp_path / "media" / "child-2.png",
     )
     assert child.section_node_id == "section"
+    assert alias.text == root.text
+    assert alias.buttons == (root.buttons[1],)
 
 
 def test_load_scenario_catalog_rejects_missing_child_node(tmp_path: Path) -> None:

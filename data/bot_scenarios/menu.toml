@@ -4,6 +4,7 @@
 # - title: button label
 # - content_text: Markdown/text file shown after clicking the button
 # - content_photos: image files shown after clicking the button
+# - content_from: reuse text, photos, and links from another existing section
 # - children: nested buttons, in display order
 # - navigation: optional section navigation buttons for text-only detail pages
 # - links: external URL buttons
@@ -208,15 +209,29 @@ links = [
 [nodes.other]
 title = "Інше"
 content_text = "texts/other.md"
-children = ["outbound_workshops", "birthdays"]
+children = ["birthdays", "outbound_workshops"]
 
 [nodes.outbound_workshops]
 title = "Виїзні майстеркласи"
 content_text = "texts/outbound_workshops.md"
+children = ["outbound_workshops_contacts"]
+
+[nodes.outbound_workshops_contacts]
+title = "Контакти"
+content_from = "contacts"
 
 [nodes.birthdays]
 title = "Дні народження"
-content_text = "texts/birthdays.md"
+content_photos = ["media/Презентація-ДН-BL-2026-s-1_page-0002.jpg"]
+children = ["birthdays_extras"]
+
+[nodes.birthdays_extras]
+title = "Додаткові послуги"
+content_photos = [
+  "media/Презентація-ДН-BL-2026-s-1_page-0003.jpg",
+  "media/Презентація-ДН-BL-2026-s-1_page-0004.jpg",
+  "media/Презентація-ДН-BL-2026-s-1_page-0005.jpg",
+]
 
 [nodes.contacts]
 title = "Контакти"

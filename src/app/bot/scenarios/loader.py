@@ -44,6 +44,11 @@ def load_scenario_catalog(
     nodes: dict[str, ScenarioNode] = {}
     for node_id, raw_node in raw_nodes.items():
         node_config = _dict(raw_node, field=f"nodes.{node_id}")
+        content_config, content_node_id = _load_content_config(
+            node_config,
+            raw_nodes=raw_nodes,
+            node_id=node_id,
+        )
         title = _required_str(node_config, "title", field=f"nodes.{node_id}.title")
         children = _str_list(
             node_config.get("children", ()),
@@ -56,14 +61,14 @@ def load_scenario_catalog(
             )
             for child_id in children
         ]
-        buttons.extend(_load_link_buttons(node_config, node_id=node_id))
-        photo_paths = _load_photo_paths(node_config, base_dir=base_dir, node_id=node_id)
+        buttons.extend(_load_link_buttons(content_config, node_id=content_node_id))
+        photo_paths = _load_photo_paths(content_config, base_dir=base_dir, node_id=content_node_id)
 
         nodes[node_id] = ScenarioNode(
             node_id=node_id,
             title=title,
             text=_load_node_text(
-                node_config,
+                content_config,
                 base_dir=base_dir,
                 fallback_title=title,
                 has_photos=bool(photo_paths),
@@ -130,6 +135,22 @@ def _load_link_buttons(node_config: dict[str, Any], *, node_id: str) -> list[Sce
             ),
         )
     return buttons
+
+
+def _load_content_config(
+    node_config: dict[str, Any],
+    *,
+    raw_nodes: dict[str, Any],
+    node_id: str,
+) -> tuple[dict[str, Any], str]:
+    source_node_id = node_config.get("content_from")
+    if source_node_id is None:
+        return node_config, node_id
+
+    source_node_id = _str(source_node_id, field=f"nodes.{node_id}.content_from")
+    _ensure_node_exists(raw_nodes, source_node_id)
+    source_config = _dict(raw_nodes[source_node_id], field=f"nodes.{source_node_id}")
+    return source_config, source_node_id
 
 
 def _load_navigation(node_config: dict[str, Any], *, node_id: str) -> str:

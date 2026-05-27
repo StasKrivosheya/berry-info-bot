@@ -50,3 +50,12 @@ links = [
   { title = "Сайт", url = "https://berryland.com.ua" },
 ]
 ```
+
+`content_from` дозволяє показати той самий контент та посилання в іншій гілці меню,
+зберігши коректну навігацію для цієї гілки:
+
+```toml
+[nodes.outbound_workshops_contacts]
+title = "Контакти"
+content_from = "contacts"
+```
