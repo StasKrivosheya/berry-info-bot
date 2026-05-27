@@ -188,8 +188,22 @@ content_photos = [
 [nodes.ecocamp]
 title = "Екотабір"
 content_text = "texts/ecocamp.md"
-# To show a designer-made presenter instead of text, use:
-# content_photos = ["media/ecocamp-presenter.jpg"]
+children = ["ecocamp_price", "ecocamp_schedule"]
+
+[nodes.ecocamp_price]
+title = "Вартість та система лояльності"
+content_text = "texts/ecocamp_price.md"
+content_photos = ["media/система лояльності.jpg"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/et" },
+]
+
+[nodes.ecocamp_schedule]
+title = "Графік та тематика заїздів"
+content_photos = ["media/загальна інформація табір.jpg"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/et" },
+]
 
 [nodes.other]
 title = "Інше"

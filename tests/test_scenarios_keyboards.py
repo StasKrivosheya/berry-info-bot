@@ -10,6 +10,8 @@ from app.bot.scenarios.catalog import (
     CONTACTS_NODE_ID,
     DIRECTIONS_NODE_ID,
     ECOCAMP_NODE_ID,
+    ECOCAMP_PRICE_NODE_ID,
+    ECOCAMP_SCHEDULE_NODE_ID,
     FAMILY_REST_NODE_ID,
     FAMILY_REST_PRICE_MAY_NODE_ID,
     FAMILY_REST_PRICE_NODE_ID,
@@ -262,6 +264,72 @@ def test_organized_program_theme_nodes_use_correct_photos() -> None:
         assert node is not None
         assert tuple(path.name for path in node.photo_paths) == (file_name,)
         assert node.photo_paths[0].is_file()
+
+
+def test_ecocamp_keyboard_has_expected_items_and_back_button() -> None:
+    node = get_node(ECOCAMP_NODE_ID)
+    assert node is not None
+    assert node.text == "Екотабір"
+
+    keyboard = build_scenario_keyboard(node)
+    assert keyboard is not None
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert [button.text for button in buttons] == [
+        "Вартість та система лояльності",
+        "Графік та тематика заїздів",
+        BACK_BUTTON_TEXT,
+    ]
+    callback_targets = [
+        ScenarioNavCallback.unpack(button.callback_data).node_id
+        for button in buttons
+        if button.callback_data is not None
+    ]
+    assert callback_targets == [
+        ECOCAMP_PRICE_NODE_ID,
+        ECOCAMP_SCHEDULE_NODE_ID,
+        DIRECTIONS_NODE_ID,
+    ]
+
+
+def test_ecocamp_detail_nodes_have_booking_link_and_leaf_navigation() -> None:
+    expected_photos = {
+        ECOCAMP_PRICE_NODE_ID: "система лояльності.jpg",
+        ECOCAMP_SCHEDULE_NODE_ID: "загальна інформація табір.jpg",
+    }
+
+    for node_id, file_name in expected_photos.items():
+        node = get_node(node_id)
+        assert node is not None
+        assert tuple(path.name for path in node.photo_paths) == (file_name,)
+        assert node.photo_paths[0].is_file()
+
+        keyboard = build_scenario_keyboard(node)
+        assert keyboard is not None
+
+        buttons = [button for row in keyboard.inline_keyboard for button in row]
+        assert [button.text for button in buttons] == [
+            "Забронювати",
+            BACK_BUTTON_TEXT,
+            MAIN_MENU_BUTTON_TEXT,
+        ]
+        assert buttons[0].url == "https://berryland.com.ua/et"
+        callback_targets = [
+            ScenarioNavCallback.unpack(button.callback_data).node_id
+            for button in buttons
+            if button.callback_data is not None
+        ]
+        assert callback_targets == [
+            ECOCAMP_NODE_ID,
+            DIRECTIONS_NODE_ID,
+        ]
+
+    price_node = get_node(ECOCAMP_PRICE_NODE_ID)
+    assert price_node is not None
+    assert price_node.text == (
+        "Повна вартість путівки - 9800 грн/дитина💛\n"
+        "А також маємо систему лояльності."  # noqa: RUF001
+    )
 
 
 def test_park_schedule_keyboard_has_month_items_and_back_button() -> None:

@@ -33,9 +33,6 @@ def build_main_menu_keyboard() -> ReplyKeyboardMarkup:
 def build_scenario_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup | None:
     """Build inline keyboard from scenario node configuration."""
 
-    if _uses_section_navigation(node):
-        return _build_section_navigation_keyboard(node)
-
     if not node.buttons and node.parent_node_id is None:
         return None
 
@@ -51,7 +48,9 @@ def build_scenario_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup | None:
         else:
             builder.button(text=button.text, url=button.url)
 
-    if node.parent_node_id is not None:
+    if _uses_section_navigation(node):
+        _add_section_navigation_buttons(builder, node)
+    elif node.parent_node_id is not None:
         _add_nav_button(
             builder,
             text=BACK_BUTTON_TEXT,
@@ -65,13 +64,12 @@ def build_scenario_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup | None:
 
 def _uses_section_navigation(node: ScenarioNode) -> bool:
     return node.section_node_id is not None and (
-        node.navigation == SECTION_NAVIGATION or not node.buttons
+        node.navigation == SECTION_NAVIGATION
+        or not any(button.target_node_id is not None for button in node.buttons)
     )
 
 
-def _build_section_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-
+def _add_section_navigation_buttons(builder: InlineKeyboardBuilder, node: ScenarioNode) -> None:
     if node.parent_node_id is not None:
         _add_nav_button(
             builder,
@@ -93,9 +91,6 @@ def _build_section_navigation_keyboard(node: ScenarioNode) -> InlineKeyboardMark
         action=NAV_ACTION_OPEN,
         node_id=DIRECTIONS_NODE_ID,
     )
-
-    builder.adjust(1)
-    return builder.as_markup()
 
 
 def _add_nav_button(
