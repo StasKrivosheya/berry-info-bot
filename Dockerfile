@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src
+COPY data/bot_scenarios /app/data/bot_scenarios
 COPY data/knowledge_base/parser_config.toml /app/data/knowledge_base/parser_config.toml
 COPY data/knowledge_base/taxonomy.toml /app/data/knowledge_base/taxonomy.toml
 

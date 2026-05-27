@@ -7,12 +7,22 @@ production RAG path for free-text questions over the local knowledge base.
 
 - `app.main`: FastAPI app plus aiogram long polling lifecycle.
 - `app.bot`: Telegram commands, menu callbacks, and free-text handlers.
+- `data/bot_scenarios`: editable button scenarios, texts, and photo presenters.
 - `app.services.knowledge_base.query_router`: one structured LLM call for routing and
   canonicalization.
 - `app.services.knowledge_base.retrieval`: OpenAI vector-store search plus local SQLite FTS5
   lexical search.
 - `app.services.knowledge_base.answer_generator`: evidence-only structured answer generation.
 - `data/knowledge_base/taxonomy.toml`: controlled directions/topics used by ingest and routing.
+
+Button scenario content is intentionally stored outside Python code:
+
+- `data/bot_scenarios/menu.toml`: button titles, nesting, order, and external links.
+- `data/bot_scenarios/texts/*.md`: text shown by scenario buttons.
+- `data/bot_scenarios/media/*`: optional designer-made image presenters.
+
+When editing Docker Compose deployments, `data/bot_scenarios` is mounted read-only into the app, so
+content can be updated with an app restart and without rebuilding the image.
 
 There is no production database service in the MVP.
 

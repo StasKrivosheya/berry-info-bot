@@ -7,6 +7,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      - ./data/bot_scenarios:/app/data/bot_scenarios:ro
       - ./data/knowledge_base/processed:/app/data/knowledge_base/processed:ro
     healthcheck:
       test:

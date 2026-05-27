@@ -1,0 +1,243 @@
+# Bot button scenarios.
+#
+# Managers usually edit:
+# - title: button label
+# - content_text: Markdown/text file shown after clicking the button
+# - content_photos: image files shown after clicking the button
+# - content_from: reuse text, photos, and links from another existing section
+# - children: nested buttons, in display order
+# - navigation: optional section navigation buttons for text-only detail pages
+# - links: external URL buttons
+
+main_menu = ["directions", "contacts"]
+
+[nodes.directions]
+title = "Направлення"
+content_text = "texts/directions.md"
+children = ["family_rest", "organized_programs", "ecocamp", "other"]
+
+[nodes.family_rest]
+title = "Сімейний відпочинок"
+content_text = "texts/family_rest.md"
+children = ["park_schedule", "family_rest_price", "camping", "gazebos", "transfer"]
+
+[nodes.park_schedule]
+title = "Графік роботи парку"
+content_text = "texts/park_schedule.md"
+children = ["park_schedule_may", "park_schedule_summer"]
+
+[nodes.park_schedule_may]
+title = "травень"
+content_photos = ["media/Презентація-СВ-BL-2026-s_page-0004.jpg"]
+
+[nodes.park_schedule_summer]
+title = "червень-серпень"
+content_photos = [
+  "media/Презентація-СВ-BL-2026-s_page-0006.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0009.jpg",
+]
+
+[nodes.family_rest_price]
+title = "Вартість"
+content_text = "texts/family_rest_price.md"
+children = [
+  "family_rest_price_may",
+  "family_rest_price_summer_saturday",
+  "family_rest_price_summer_sunday",
+]
+
+[nodes.family_rest_price_may]
+title = "Травень"
+content_photos = ["media/Презентація-СВ-BL-2026-s_page-0005.jpg"]
+
+[nodes.family_rest_price_summer_saturday]
+title = "Літо, субота"
+content_photos = [
+  "media/Презентація-СВ-BL-2026-s_page-0007.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0008.jpg",
+]
+
+[nodes.family_rest_price_summer_sunday]
+title = "Літо, неділя"
+content_photos = [
+  "media/Презентація-СВ-BL-2026-s_page-0010.jpg",
+  "media/Презентація-СВ-BL-2026-s_page-0011.jpg",
+]
+
+[nodes.camping]
+title = "Кемпінг"
+content_text = "texts/camping.md"
+children = ["camping_may", "camping_summer"]
+
+[nodes.camping_may]
+title = "Ціни у травні"
+content_text = "texts/camping_may.md"
+navigation = "section"
+
+[nodes.camping_summer]
+title = "Ціни влітку"
+content_text = "texts/camping_summer.md"
+navigation = "section"
+
+[nodes.gazebos]
+title = "Альтанки"
+content_photos = ["media/мапа.jpg"]
+children = ["gazebos_terms"]
+
+[nodes.gazebos_terms]
+title = "Умови відпочинку"
+content_photos = [
+  "media/умови.jpg",
+  "media/умови-2.jpg",
+]
+
+[nodes.transfer]
+title = "Трансфер"
+content_text = "texts/transfer.md"
+children = ["transfer_dnipro", "transfer_samar"]
+
+[nodes.transfer_dnipro]
+title = "Дніпро"
+content_text = "texts/transfer_dnipro.md"
+children = ["transfer_dnipro_terms"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/ts-1" },
+]
+
+[nodes.transfer_dnipro_terms]
+title = "Умови бронювання"
+content_text = "texts/transfer_booking_terms.md"
+
+[nodes.transfer_samar]
+title = "Самар"
+content_text = "texts/transfer_samar.md"
+children = ["transfer_samar_terms"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/ts-1" },
+]
+
+[nodes.transfer_samar_terms]
+title = "Умови бронювання"
+content_text = "texts/transfer_booking_terms.md"
+
+[nodes.organized_programs]
+title = "Організовані програми"
+content_text = "texts/organized_programs.md"
+children = [
+  "organized_programs_details",
+  "organized_programs_price",
+  "organized_programs_topics",
+  "organized_programs_extras",
+]
+
+[nodes.organized_programs_details]
+title = "Графік та умови"
+content_photos = ["media/Загальна інформація.jpg"]
+
+[nodes.organized_programs_price]
+title = "Вартість"
+content_photos = ["media/Вартість.jpg"]
+
+[nodes.organized_programs_topics]
+title = "Програми"
+content_photos = ["media/ОП_Тематики програм.jpg"]
+children = [
+  "organized_programs_berry_expedition",
+  "organized_programs_ranch_adventures",
+  "organized_programs_graduation_level",
+  "organized_programs_team_vibe",
+  "organized_programs_bubble_boom",
+  "organized_programs_overnight",
+  "organized_programs_preschool_graduation",
+]
+
+[nodes.organized_programs_berry_expedition]
+title = "Ягідна експедиція"
+content_photos = ["media/ОП_Ягідна.jpg"]
+
+[nodes.organized_programs_ranch_adventures]
+title = "Пригоди на Ранчо"
+content_photos = ["media/ОП_Ранчо.jpg"]
+
+[nodes.organized_programs_graduation_level]
+title = "Випускний «Level 4.0 - Done»"
+content_photos = ["media/photo_5417970806207222854_y.jpg"]
+
+[nodes.organized_programs_team_vibe]
+title = "Тімбілдінг «TEAM VIBE»"
+content_photos = ["media/ОП_Тімбілдинг.jpg"]
+
+[nodes.organized_programs_bubble_boom]
+title = "«BERRY BUBBLE BOOM»"
+content_photos = ["media/ОП_Бульбашкова.jpg"]
+
+[nodes.organized_programs_overnight]
+title = "Унікальна програма з ночівлею у Berry Land"
+content_photos = ["media/photo_5417970806207222858_y.jpg"]
+
+[nodes.organized_programs_preschool_graduation]
+title = "Випускний для дошкільнят «Крила дитинства»"
+content_photos = ["media/ОП_Випускний-для-дошкільнят.jpg"]
+
+[nodes.organized_programs_extras]
+title = "Додаткові послуги"
+content_photos = [
+  "media/Додаткові послуги1.jpg",
+  "media/Додатокві послуги2.jpg",
+]
+
+[nodes.ecocamp]
+title = "Екотабір"
+content_text = "texts/ecocamp.md"
+children = ["ecocamp_price", "ecocamp_schedule"]
+
+[nodes.ecocamp_price]
+title = "Вартість та система лояльності"
+content_text = "texts/ecocamp_price.md"
+content_photos = ["media/система лояльності.jpg"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/et" },
+]
+
+[nodes.ecocamp_schedule]
+title = "Графік та тематика заїздів"
+content_photos = ["media/загальна інформація табір.jpg"]
+links = [
+  { title = "Забронювати", url = "https://berryland.com.ua/et" },
+]
+
+[nodes.other]
+title = "Інше"
+content_text = "texts/other.md"
+children = ["birthdays", "outbound_workshops"]
+
+[nodes.outbound_workshops]
+title = "Виїзні майстеркласи"
+content_text = "texts/outbound_workshops.md"
+children = ["outbound_workshops_contacts"]
+
+[nodes.outbound_workshops_contacts]
+title = "Контакти"
+content_from = "contacts"
+
+[nodes.birthdays]
+title = "Дні народження"
+content_photos = ["media/Презентація-ДН-BL-2026-s-1_page-0002.jpg"]
+children = ["birthdays_extras"]
+
+[nodes.birthdays_extras]
+title = "Додаткові послуги"
+content_photos = [
+  "media/Презентація-ДН-BL-2026-s-1_page-0003.jpg",
+  "media/Презентація-ДН-BL-2026-s-1_page-0004.jpg",
+  "media/Презентація-ДН-BL-2026-s-1_page-0005.jpg",
+]
+
+[nodes.contacts]
+title = "Контакти"
+content_text = "texts/contacts.md"
+links = [
+  { title = "Instagram", url = "https://www.instagram.com/berryland_dnipro/" },
+  { title = "Google Карти", url = "https://maps.app.goo.gl/jhKpvRc2m93Nj2BF7" },
+  { title = "Сайт", url = "https://berryland.com.ua" },
+]
